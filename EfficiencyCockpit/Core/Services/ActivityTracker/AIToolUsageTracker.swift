@@ -36,22 +36,19 @@ final class AIToolUsageTracker {
         }
     }
 
-    // Known AI tools by bundle ID
+    // Known AI tools by bundle ID (only dedicated AI apps, not IDEs or terminals)
     static let aiToolsByBundleId: [String: (name: String, type: AIToolType)] = [
-        // Desktop Apps
+        // Desktop Apps - dedicated AI chat clients
         "com.anthropic.claudefordesktop": ("Claude", .chatAssistant),
         "com.openai.chat": ("ChatGPT", .chatAssistant),
         "ai.perplexity.mac": ("Perplexity", .chatAssistant),
         "com.lencx.chatgpt": ("ChatGPT (Tauri)", .chatAssistant),
 
-        // Code Assistants
-        "com.todesktop.230313mzl4w4u92": ("Cursor", .codeAssistant),
-        "com.github.Copilot": ("GitHub Copilot", .codeAssistant),
+        // Dedicated code assistants (NOT Cursor - it's an IDE first)
+        "com.github.Copilot": ("GitHub Copilot", .codeAssistant)
 
-        // CLI Tools (detected via Terminal)
-        "com.apple.Terminal": ("Terminal", .cliTool),
-        "com.googlecode.iterm2": ("iTerm", .cliTool),
-        "dev.warp.Warp-Stable": ("Warp", .cliTool)
+        // Note: Cursor is handled as IDE, with AI detection from window title
+        // Note: Terminals are handled separately, with AI CLI detection from title
     ]
 
     // Known AI tool URLs (for browser detection)

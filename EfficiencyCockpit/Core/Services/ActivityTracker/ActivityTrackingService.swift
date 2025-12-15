@@ -143,12 +143,29 @@ final class ActivityTrackingService: ObservableObject {
                 if let context = ideTracker.getIDEContext(bundleId: bundleId, windowTitle: windowInfo.windowTitle) {
                     filePath = context.fileName
                     projectPath = context.projectName
+                }
 
-                    // Check for git repo and activity
-                    if let project = context.projectPath ?? context.projectName {
-                        let expandedPath = (project as NSString).expandingTildeInPath
-                        if let gitActivity = checkGitActivity(at: expandedPath) {
-                            // If git activity detected, create a separate git activity
+                // Also try to extract from window title directly
+                if filePath == nil {
+                    filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+                }
+                if projectPath == nil {
+                    projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+                }
+
+                // Try to find git repo in common project locations
+                if let projectName = projectPath {
+                    let possiblePaths = [
+                        NSHomeDirectory() + "/" + projectName,
+                        NSHomeDirectory() + "/Projects/" + projectName,
+                        NSHomeDirectory() + "/Developer/" + projectName,
+                        NSHomeDirectory() + "/workspace/" + projectName,
+                        NSHomeDirectory() + "/code/" + projectName,
+                        NSHomeDirectory() + "/src/" + projectName
+                    ]
+
+                    for path in possiblePaths {
+                        if let gitActivity = checkGitActivity(at: path) {
                             let gitAct = Activity(
                                 type: gitActivity.type,
                                 appBundleId: bundleId,
@@ -158,21 +175,76 @@ final class ActivityTrackingService: ObservableObject {
                                 projectPath: gitActivity.repoPath
                             )
                             pendingActivities.append(gitAct)
-                            projectPath = "\(gitActivity.repoPath) (\(gitActivity.branch))"
-                        } else if gitTracker.isGitRepository(expandedPath) {
-                            if let status = gitTracker.getGitStatus(at: expandedPath) {
-                                projectPath = "\(status.repoPath) (\(status.branch ?? "detached"))"
+                            projectPath = "\(projectName) (\(gitActivity.branch))"
+                            break
+                        } else if gitTracker.isGitRepository(path) {
+                            if let status = gitTracker.getGitStatus(at: path) {
+                                projectPath = "\(projectName) (\(status.branch ?? "detached"))"
+                                break
                             }
                         }
                     }
                 }
             }
 
-            // Fallback to window title parsing
-            if filePath == nil {
+            // Terminal project detection from window title
+            let terminals = [
+                "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
+                "net.kovidgoyal.kitty", "co.zeit.hyper", "com.github.wez.wezterm", "io.alacritty"
+            ]
+            if terminals.contains(bundleId), let title = windowInfo.windowTitle {
+                // Try to extract path from terminal title (often shows current directory)
+                // Common formats: "user@host:~/path" or "~/path" or "/Users/user/path"
+                var extractedPath: String?
+
+                if title.contains("~") {
+                    if let tildeIndex = title.range(of: "~") {
+                        var pathPart = String(title[tildeIndex.lowerBound...])
+                        // Remove trailing parts like " — zsh"
+                        if let dashIndex = pathPart.range(of: " —") ?? pathPart.range(of: " -") {
+                            pathPart = String(pathPart[..<dashIndex.lowerBound])
+                        }
+                        extractedPath = (pathPart as NSString).expandingTildeInPath
+                    }
+                } else if title.contains("/Users/") || title.contains("/home/") {
+                    // Try to find a path in the title
+                    let parts = title.components(separatedBy: " ")
+                    for part in parts {
+                        if part.hasPrefix("/Users/") || part.hasPrefix("/home/") {
+                            extractedPath = part
+                            break
+                        }
+                    }
+                }
+
+                if let path = extractedPath {
+                    // Check for git in this path
+                    if let gitActivity = checkGitActivity(at: path) {
+                        let gitAct = Activity(
+                            type: gitActivity.type,
+                            appBundleId: bundleId,
+                            appName: windowInfo.ownerName,
+                            windowTitle: gitActivity.message,
+                            filePath: nil,
+                            projectPath: gitActivity.repoPath
+                        )
+                        pendingActivities.append(gitAct)
+                        projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(gitActivity.branch))"
+                    } else if gitTracker.isGitRepository(path) {
+                        if let status = gitTracker.getGitStatus(at: path) {
+                            projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(status.branch ?? "detached"))"
+                        }
+                    } else {
+                        projectPath = URL(fileURLWithPath: path).lastPathComponent
+                    }
+                }
+            }
+
+            // Fallback to window title parsing for non-IDEs
+            if filePath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
                 filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
             }
-            if projectPath == nil {
+            if projectPath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
                 projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
             }
         }
@@ -241,7 +313,7 @@ final class ActivityTrackingService: ObservableObject {
         // Check if this is a window focus change within same app
         let isWindowChange = isWindowFocusChange(windowInfo)
 
-        // AI tool detection (highest priority)
+        // Dedicated AI tool apps (Claude desktop, ChatGPT app, etc.)
         if aiTracker.detectAITool(bundleId: bundleId) != nil {
             return .aiToolUse
         }
@@ -265,15 +337,24 @@ final class ActivityTrackingService: ObservableObject {
             "io.alacritty"
         ]
         if terminals.contains(bundleId) {
+            // Check if running AI CLI tool (claude, aider, etc.)
             if aiTracker.detectCLITool(from: windowInfo.windowTitle) != nil {
                 return .aiToolUse
             }
             return .terminalCommand
         }
 
-        // IDE detection - file open/edit
+        // IDE detection - check for AI usage in IDE first
         if IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
-            // If switching files within same IDE, it's a window focus
+            // Check if using AI features in IDE (Cursor AI, Copilot chat, etc.)
+            if let title = windowInfo.windowTitle?.lowercased() {
+                if title.contains("composer") || title.contains("chat") ||
+                   title.contains("copilot") || title.contains("ai") {
+                    return .aiToolUse
+                }
+            }
+
+            // Regular IDE file activity
             if isWindowChange {
                 return .windowFocus
             }
