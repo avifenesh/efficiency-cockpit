@@ -1,0 +1,10 @@
+# Ignore build artefacts and databases
+target/
+*.db
+*.log
+*.sqlite
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db

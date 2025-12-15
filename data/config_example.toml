@@ -1,0 +1,18 @@
+# Example configuration.
+# Copy this file to config.toml and adjust directories, ignore patterns and settings.
+
+directories = [
+  "/home/youruser/workspace",
+  "/home/youruser/notes"
+]
+
+ignore_patterns = [
+  "\\.git",
+  "target",
+  "node_modules"
+]
+
+[notifications]
+daily_digest_hour = 20
+max_nudges_per_day = 2
+enable_context_switch_nudges = true
