@@ -255,6 +255,16 @@ fn test_error_types() {
     assert!(db_err.to_string().contains("test error"));
 }
 
+/// Test config validation rejects max_snapshots=0
+#[test]
+fn test_config_rejects_zero_max_snapshots() {
+    let mut config = Config::default_for_testing();
+    config.database.max_snapshots = 0;
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("max_snapshots"));
+}
+
 /// Test CSV escape function handles various cases
 #[test]
 fn test_csv_escape_basic() {

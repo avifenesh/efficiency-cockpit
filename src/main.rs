@@ -164,6 +164,17 @@ enum Commands {
     Manpage,
 }
 
+/// Get the search index path, defaulting to current directory if database path has no parent.
+fn get_search_index_path(config: &Config) -> PathBuf {
+    config
+        .database
+        .path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("search_index")
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -340,7 +351,7 @@ fn cmd_list(db: &Database, limit: u32) -> Result<()> {
 
 /// Search indexed content.
 fn cmd_search(config: &Config, query: &str, limit: usize) -> Result<()> {
-    let index_path = config.database.path.parent().unwrap_or(&config.database.path).join("search_index");
+    let index_path = get_search_index_path(config);
 
     let index = SearchIndex::create_or_open(&index_path)?;
     let results = index.search(query, limit)?;
@@ -470,14 +481,10 @@ fn cmd_status(config: &Config, db: &Database) -> Result<()> {
 
 /// Index files for search.
 fn cmd_index(config: &Config, path: &PathBuf, dry_run: bool) -> Result<()> {
+    use regex::Regex;
     use walkdir::WalkDir;
 
-    let index_path = config
-        .database
-        .path
-        .parent()
-        .unwrap_or(&config.database.path)
-        .join("search_index");
+    let index_path = get_search_index_path(config);
 
     println!("Indexing files from: {}", path.display());
     if dry_run {
@@ -485,6 +492,13 @@ fn cmd_index(config: &Config, path: &PathBuf, dry_run: bool) -> Result<()> {
     } else {
         println!("Index location: {}\n", index_path.display());
     }
+
+    // Compile ignore patterns (validated at config load time)
+    let compiled_patterns: Vec<Regex> = config
+        .ignore_patterns
+        .iter()
+        .filter_map(|p| Regex::new(p).ok())
+        .collect();
 
     let mut indexed_count = 0;
     let mut skipped_count = 0;
@@ -503,12 +517,11 @@ fn cmd_index(config: &Config, path: &PathBuf, dry_run: bool) -> Result<()> {
             continue;
         }
 
-        // Check ignore patterns
+        // Check ignore patterns using regex (consistent with watcher)
         let path_str = file_path.to_string_lossy();
-        let should_ignore = config
-            .ignore_patterns
+        let should_ignore = compiled_patterns
             .iter()
-            .any(|pattern| path_str.contains(pattern));
+            .any(|pattern| pattern.is_match(&path_str));
 
         if should_ignore {
             skipped_count += 1;
@@ -875,12 +888,7 @@ fn cmd_stats(db: &Database, config: &Config) -> Result<()> {
     cli::key_value("Database path", &config.database.path.display().to_string());
 
     // Search index
-    let index_path = config
-        .database
-        .path
-        .parent()
-        .unwrap_or(&config.database.path)
-        .join("search_index");
+    let index_path = get_search_index_path(config);
     if index_path.exists() {
         if let Ok(size) = dir_size(&index_path) {
             let size_str = if size > 1024 * 1024 {

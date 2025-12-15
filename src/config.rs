@@ -171,7 +171,7 @@ impl Config {
     }
 
     /// Validate the configuration.
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         // Validate directories
         if self.directories.is_empty() {
             anyhow::bail!("At least one directory must be configured");
@@ -202,6 +202,9 @@ impl Config {
         }
 
         // Validate database settings
+        if self.database.max_snapshots == 0 {
+            anyhow::bail!("max_snapshots must be at least 1");
+        }
         if self.database.max_snapshots > 1_000_000 {
             anyhow::bail!("max_snapshots must not exceed 1,000,000");
         }
