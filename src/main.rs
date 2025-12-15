@@ -156,6 +156,9 @@ enum Commands {
         #[arg(long)]
         confirm: bool,
     },
+
+    /// Show database statistics
+    Stats,
 }
 
 fn main() -> Result<()> {
@@ -209,6 +212,7 @@ fn main() -> Result<()> {
         Commands::Completions { .. } => unreachable!(),
         Commands::Import { input, skip_duplicates } => cmd_import(&db, &input, skip_duplicates),
         Commands::Cleanup { keep, confirm } => cmd_cleanup(&db, keep, confirm),
+        Commands::Stats => cmd_stats(&db, &config),
     }
 }
 
@@ -771,4 +775,106 @@ fn cmd_cleanup(db: &Database, keep: u32, confirm: bool) -> Result<()> {
     ));
 
     Ok(())
+}
+
+/// Show database statistics.
+fn cmd_stats(db: &Database, config: &Config) -> Result<()> {
+    use chrono::{Duration, Utc};
+
+    cli::header("Efficiency Cockpit Statistics");
+    println!();
+
+    // Snapshot stats
+    let all_snapshots = db.get_recent_snapshots(100000)?;
+    let total_snapshots = all_snapshots.len();
+
+    cli::header("Snapshots:");
+    cli::key_value("Total snapshots", &total_snapshots.to_string());
+
+    if !all_snapshots.is_empty() {
+        let oldest = all_snapshots.last().map(|s| format_relative_time(s.timestamp));
+        let newest = all_snapshots.first().map(|s| format_relative_time(s.timestamp));
+
+        if let Some(oldest) = oldest {
+            cli::key_value("Oldest snapshot", &oldest);
+        }
+        if let Some(newest) = newest {
+            cli::key_value("Newest snapshot", &newest);
+        }
+
+        // Count snapshots by time period
+        let now = Utc::now();
+        let today = all_snapshots
+            .iter()
+            .filter(|s| now - s.timestamp < Duration::days(1))
+            .count();
+        let this_week = all_snapshots
+            .iter()
+            .filter(|s| now - s.timestamp < Duration::days(7))
+            .count();
+
+        cli::key_value("Snapshots today", &today.to_string());
+        cli::key_value("Snapshots this week", &this_week.to_string());
+    }
+
+    // File events
+    println!();
+    cli::header("File Events:");
+    let now = Utc::now();
+    let events_today = db.get_file_events(now - Duration::days(1), now)?;
+    let events_week = db.get_file_events(now - Duration::days(7), now)?;
+
+    cli::key_value("Events today", &events_today.len().to_string());
+    cli::key_value("Events this week", &events_week.len().to_string());
+
+    // Database file size
+    println!();
+    cli::header("Storage:");
+    if let Ok(metadata) = std::fs::metadata(&config.database.path) {
+        let size_kb = metadata.len() / 1024;
+        let size_str = if size_kb > 1024 {
+            format!("{:.1} MB", size_kb as f64 / 1024.0)
+        } else {
+            format!("{} KB", size_kb)
+        };
+        cli::key_value("Database size", &size_str);
+    }
+    cli::key_value("Database path", &config.database.path.display().to_string());
+
+    // Search index
+    let index_path = config
+        .database
+        .path
+        .parent()
+        .unwrap_or(&config.database.path)
+        .join("search_index");
+    if index_path.exists() {
+        if let Ok(size) = dir_size(&index_path) {
+            let size_str = if size > 1024 * 1024 {
+                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+            } else {
+                format!("{} KB", size / 1024)
+            };
+            cli::key_value("Search index size", &size_str);
+        }
+    } else {
+        cli::key_value("Search index", "not created");
+    }
+
+    Ok(())
+}
+
+/// Calculate total size of a directory.
+fn dir_size(path: &std::path::Path) -> std::io::Result<u64> {
+    let mut total = 0;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_file() {
+            total += metadata.len();
+        } else if metadata.is_dir() {
+            total += dir_size(&entry.path())?;
+        }
+    }
+    Ok(total)
 }
