@@ -90,7 +90,7 @@ final class ActivityTrackingService: ObservableObject {
 
             // Check immediate subdirectories
             if let contents = try? fileManager.contentsOfDirectory(atPath: basePath) {
-                for item in contents.prefix(50) { // Limit to 50 to avoid too many
+                for item in contents { // Check all directories
                     let fullPath = "\(basePath)/\(item)"
                     var isDir: ObjCBool = false
                     if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue {
