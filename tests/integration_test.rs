@@ -197,3 +197,60 @@ fn test_file_event_queries() {
     let no_events = db.get_file_events(past, also_past).unwrap();
     assert!(no_events.is_empty());
 }
+
+/// Test snapshot serialization for export
+#[test]
+fn test_snapshot_json_serialization() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let db = Database::open(&db_path).unwrap();
+
+    // Add snapshots
+    let service = SnapshotService::new(&db);
+    for i in 0..3 {
+        let context = efficiency_cockpit::snapshot::ContextInfo {
+            active_file: Some(PathBuf::from(format!("/src/file{}.rs", i))),
+            active_directory: Some(PathBuf::from("/src")),
+            git_branch: Some("main".to_string()),
+            git_repo_root: None,
+        };
+        service.capture(&context, Some(format!("Test note {}", i))).unwrap();
+    }
+
+    // Retrieve and serialize
+    let snapshots = db.get_recent_snapshots(10).unwrap();
+    let json = serde_json::to_string_pretty(&snapshots).unwrap();
+
+    assert!(json.contains("active_file"));
+    assert!(json.contains("Test note"));
+    assert!(json.contains("main"));
+}
+
+/// Test CLI output helpers
+#[test]
+fn test_cli_priority_badge() {
+    let high = efficiency_cockpit::cli::priority_badge("HIGH");
+    assert!(high.contains("HIGH"));
+
+    let medium = efficiency_cockpit::cli::priority_badge("MEDIUM");
+    assert!(medium.contains("MEDIUM"));
+
+    let low = efficiency_cockpit::cli::priority_badge("LOW");
+    assert!(low.contains("LOW"));
+}
+
+/// Test error type display
+#[test]
+fn test_error_types() {
+    use efficiency_cockpit::error::*;
+
+    let config_err = ConfigError::NotFound {
+        path: PathBuf::from("/config.toml"),
+    };
+    assert!(config_err.to_string().contains("/config.toml"));
+
+    let db_err = DatabaseError::QueryFailed {
+        message: "test error".to_string(),
+    };
+    assert!(db_err.to_string().contains("test error"));
+}
