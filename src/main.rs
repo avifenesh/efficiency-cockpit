@@ -218,19 +218,34 @@ fn main() -> Result<()> {
 
 /// Start the file watcher daemon.
 fn cmd_watch(config: &Config, db: &Database) -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
-    println!("Starting file watcher...");
-    println!("Watching directories:");
+    // Set up graceful shutdown handler
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        println!("\nShutting down gracefully...");
+        r.store(false, Ordering::SeqCst);
+    })
+    .ok(); // Ignore if handler can't be set
+
+    cli::header("Starting file watcher...");
+    cli::info("Watching directories:");
     for dir in &config.directories {
         println!("  - {}", dir.display());
     }
-    println!("\nPress Ctrl+C to stop.\n");
+    println!();
+    cli::info("Press Ctrl+C to stop.");
+    println!();
 
     let watcher = FileWatcher::new(&config.directories, &config.ignore_patterns)?;
     let snapshot_service = SnapshotService::new(db);
+    let mut event_count = 0u64;
 
-    loop {
+    while running.load(Ordering::SeqCst) {
         let events = watcher.wait_for_events(Duration::from_secs(5));
 
         for event in events {
@@ -238,6 +253,7 @@ fn cmd_watch(config: &Config, db: &Database) -> Result<()> {
             if let Err(e) = snapshot_service.capture(&context, None) {
                 tracing::error!("Failed to capture snapshot: {}", e);
             } else {
+                event_count += 1;
                 tracing::debug!("Captured: {}", event.path.display());
             }
         }
@@ -247,6 +263,9 @@ fn cmd_watch(config: &Config, db: &Database) -> Result<()> {
             tracing::warn!("Cleanup failed: {}", e);
         }
     }
+
+    cli::success(&format!("Watcher stopped. Captured {} events.", event_count));
+    Ok(())
 }
 
 /// Capture a snapshot of current context.
