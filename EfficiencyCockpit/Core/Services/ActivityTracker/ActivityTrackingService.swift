@@ -21,8 +21,9 @@ final class ActivityTrackingService: ObservableObject {
     var pollingInterval: TimeInterval = 5.0
 
     /// Batch size before persisting to database
-    private let batchSize = 10
+    private let batchSize = 5
     private var pendingActivities: [Activity] = []
+    private var lastFlushTime: Date = Date()
 
     private var lastWindowInfo: WindowInfo?
     private var lastActivityTime: Date?
@@ -30,20 +31,94 @@ final class ActivityTrackingService: ObservableObject {
     private var lastGitBranch: [String: String] = [:] // repoPath -> branch
     private var lastGitCommitHash: [String: String] = [:] // repoPath -> commit hash
 
+    // Known project directories to monitor for git
+    private var knownProjectPaths: Set<String> = []
+    private var gitPollingTask: Task<Void, Never>?
+
     // MARK: - Lifecycle
 
     func configure(modelContext: ModelContext) {
         self.modelContext = modelContext
+        // Discover project directories
+        discoverProjectDirectories()
     }
 
     func startTracking() async {
         guard !isTracking else { return }
         isTracking = true
 
+        // Main activity polling
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.captureActivity()
                 try? await Task.sleep(for: .seconds(self?.pollingInterval ?? 5.0))
+            }
+        }
+
+        // Separate git polling (every 10 seconds)
+        gitPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollGitRepositories()
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+    }
+
+    /// Discover common project directories
+    private func discoverProjectDirectories() {
+        let home = NSHomeDirectory()
+        let commonPaths = [
+            home,
+            "\(home)/Projects",
+            "\(home)/Developer",
+            "\(home)/workspace",
+            "\(home)/code",
+            "\(home)/src",
+            "\(home)/repos",
+            "\(home)/github"
+        ]
+
+        let fileManager = FileManager.default
+
+        for basePath in commonPaths {
+            guard fileManager.fileExists(atPath: basePath) else { continue }
+
+            // Check if basePath itself is a git repo
+            if gitTracker.isGitRepository(basePath) {
+                knownProjectPaths.insert(basePath)
+            }
+
+            // Check immediate subdirectories
+            if let contents = try? fileManager.contentsOfDirectory(atPath: basePath) {
+                for item in contents.prefix(50) { // Limit to 50 to avoid too many
+                    let fullPath = "\(basePath)/\(item)"
+                    var isDir: ObjCBool = false
+                    if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue {
+                        if gitTracker.isGitRepository(fullPath) {
+                            knownProjectPaths.insert(fullPath)
+                        }
+                    }
+                }
+            }
+        }
+
+        print("[Git] Discovered \(knownProjectPaths.count) git repositories")
+    }
+
+    /// Poll known git repositories for changes
+    private func pollGitRepositories() async {
+        for repoPath in knownProjectPaths {
+            if let gitActivity = checkGitActivity(at: repoPath) {
+                let activity = Activity(
+                    type: gitActivity.type,
+                    appBundleId: nil,
+                    appName: "Git",
+                    windowTitle: gitActivity.message,
+                    filePath: nil,
+                    projectPath: gitActivity.repoPath
+                )
+                pendingActivities.append(activity)
+                flushPendingActivities()
             }
         }
     }
@@ -51,6 +126,8 @@ final class ActivityTrackingService: ObservableObject {
     func stopTracking() {
         pollingTask?.cancel()
         pollingTask = nil
+        gitPollingTask?.cancel()
+        gitPollingTask = nil
         isTracking = false
 
         // Flush any pending activities
@@ -81,9 +158,12 @@ final class ActivityTrackingService: ObservableObject {
         // Queue for persistence
         pendingActivities.append(activity)
 
-        // Flush if batch size reached
-        if pendingActivities.count >= batchSize {
+        // Flush immediately for first few activities, then batch
+        // Also flush every 30 seconds to ensure data is saved
+        let timeSinceFlush = Date().timeIntervalSince(lastFlushTime)
+        if pendingActivities.count <= 3 || pendingActivities.count >= batchSize || timeSinceFlush > 30 {
             flushPendingActivities()
+            lastFlushTime = Date()
         }
     }
 

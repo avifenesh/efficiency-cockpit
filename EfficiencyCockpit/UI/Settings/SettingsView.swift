@@ -110,6 +110,16 @@ struct PermissionsSettingsView: View {
                 )
 
                 PermissionRow(
+                    title: "Screen Recording",
+                    description: "Required to see window titles (files, tabs, projects)",
+                    status: permissionManager.screenRecordingStatus,
+                    action: nil,
+                    openSettings: {
+                        permissionManager.openSystemPreferences(for: .screenRecording)
+                    }
+                )
+
+                PermissionRow(
                     title: "Full Disk Access",
                     description: "Required to read shell history and git directories",
                     status: permissionManager.fullDiskAccessStatus,
@@ -121,7 +131,7 @@ struct PermissionsSettingsView: View {
             } header: {
                 Text("Required Permissions")
             } footer: {
-                Text("Grant these permissions to enable full tracking capabilities.")
+                Text("Grant these permissions to enable full tracking capabilities. Screen Recording is essential for tracking files and projects.")
             }
 
             Section {
@@ -371,11 +381,12 @@ struct MCPSettingsView: View {
     }
 
     private var mcpConfigSnippet: String {
-        """
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        return """
         {
           "mcpServers": {
             "efficiency-cockpit": {
-              "command": "/Applications/Efficiency Cockpit.app/Contents/MacOS/EfficiencyCockpitMCPServer"
+              "command": "\(homeDir)/Applications/Efficiency Cockpit.app/Contents/MacOS/EfficiencyCockpitMCPServer"
             }
           }
         }
@@ -406,9 +417,9 @@ struct AboutSettingsView: View {
             Spacer()
 
             VStack(spacing: 8) {
-                Link("View on GitHub", destination: URL(string: "https://github.com")!)
+                Link("View on GitHub", destination: URL(string: "https://github.com/avifenesh/efficiency-cockpit")!)
 
-                Link("Report an Issue", destination: URL(string: "https://github.com")!)
+                Link("Report an Issue", destination: URL(string: "https://github.com/avifenesh/efficiency-cockpit/issues")!)
             }
 
             Spacer()

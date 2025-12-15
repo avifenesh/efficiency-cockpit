@@ -30,13 +30,14 @@ final class WindowTracker {
 
         let pid = frontApp.processIdentifier
         let bundleId = frontApp.bundleIdentifier
+        let appName = frontApp.localizedName ?? "Unknown"
 
         let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
         }
 
-        // Find the frontmost window belonging to the active app
+        // Try to find window by PID first (works with Screen Recording permission)
         for window in windowList {
             guard let windowPID = window[kCGWindowOwnerPID as String] as? pid_t,
                   windowPID == pid else {
@@ -44,7 +45,7 @@ final class WindowTracker {
             }
 
             let windowId = window[kCGWindowNumber as String] as? CGWindowID ?? 0
-            let ownerName = window[kCGWindowOwnerName as String] as? String ?? "Unknown"
+            let ownerName = window[kCGWindowOwnerName as String] as? String ?? appName
             let windowTitle = window[kCGWindowName as String] as? String
             let layer = window[kCGWindowLayer as String] as? Int ?? 0
             let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
@@ -68,7 +69,47 @@ final class WindowTracker {
             )
         }
 
-        return nil
+        // Fallback: Try matching by owner name (for apps without Screen Recording permission)
+        for window in windowList {
+            let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
+            guard ownerName == appName else { continue }
+
+            let windowId = window[kCGWindowNumber as String] as? CGWindowID ?? 0
+            let windowPID = window[kCGWindowOwnerPID as String] as? pid_t ?? pid
+            let windowTitle = window[kCGWindowName as String] as? String
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+
+            let bounds = CGRect(
+                x: boundsDict["X"] ?? 0,
+                y: boundsDict["Y"] ?? 0,
+                width: boundsDict["Width"] ?? 0,
+                height: boundsDict["Height"] ?? 0
+            )
+
+            return WindowInfo(
+                windowId: windowId,
+                ownerPID: windowPID,
+                ownerName: ownerName,
+                bundleId: bundleId,
+                windowTitle: windowTitle,
+                bounds: bounds,
+                layer: layer,
+                isOnScreen: true
+            )
+        }
+
+        // Last fallback: Return basic info from frontmost app without window details
+        return WindowInfo(
+            windowId: 0,
+            ownerPID: pid,
+            ownerName: appName,
+            bundleId: bundleId,
+            windowTitle: nil,
+            bounds: .zero,
+            layer: 0,
+            isOnScreen: true
+        )
     }
 
     func getAllWindows() -> [WindowInfo] {

@@ -7,6 +7,7 @@ final class PermissionManager: ObservableObject {
     @Published private(set) var accessibilityStatus: PermissionStatus = .unknown
     @Published private(set) var automationStatus: [String: PermissionStatus] = [:]
     @Published private(set) var fullDiskAccessStatus: PermissionStatus = .unknown
+    @Published private(set) var screenRecordingStatus: PermissionStatus = .unknown
 
     static let trackedApps: [String: String] = [
         "com.google.Chrome": "Google Chrome",
@@ -27,6 +28,7 @@ final class PermissionManager: ObservableObject {
 
     func checkAllPermissions() {
         checkAccessibilityPermission()
+        checkScreenRecordingPermission()
         checkFullDiskAccess()
         for bundleId in Self.trackedApps.keys {
             checkAutomationPermission(for: bundleId)
@@ -45,6 +47,36 @@ final class PermissionManager: ObservableObject {
         let trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         accessibilityStatus = trusted ? .granted : .denied
         return trusted
+    }
+
+    // MARK: - Screen Recording
+
+    func checkScreenRecordingPermission() {
+        // Check by trying to get window names from CGWindowListCopyWindowInfo
+        // Without permission, window names are masked/nil for other apps
+        let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            screenRecordingStatus = .denied
+            return
+        }
+
+        // Find a window from another app and check if we can see its name
+        let ourPID = ProcessInfo.processInfo.processIdentifier
+        for window in windowList {
+            guard let windowPID = window[kCGWindowOwnerPID as String] as? pid_t,
+                  windowPID != ourPID else {
+                continue
+            }
+
+            // If we can see a window name from another process, permission is granted
+            if let name = window[kCGWindowName as String] as? String, !name.isEmpty {
+                screenRecordingStatus = .granted
+                return
+            }
+        }
+
+        // If we couldn't find any window names from other apps, permission is likely denied
+        screenRecordingStatus = .denied
     }
 
     // MARK: - Automation (AppleScript)

@@ -31,6 +31,10 @@ struct MenuBarView: View {
         .frame(width: 320)
         .onAppear {
             appState.activityTracker.configure(modelContext: modelContext)
+            // Refresh stats when menu opens
+            Task {
+                await appState.refreshStats()
+            }
         }
     }
 
@@ -227,5 +231,5 @@ struct ActivityRowCompact: View {
 
 #Preview {
     MenuBarView()
-        .environmentObject(AppState())
+        .environmentObject(AppState.preview)
 }

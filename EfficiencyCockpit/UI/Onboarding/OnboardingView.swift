@@ -59,6 +59,8 @@ struct OnboardingView: View {
             WelcomeStepView()
         case .accessibility:
             AccessibilityStepView(permissionManager: appState.permissionManager)
+        case .screenRecording:
+            ScreenRecordingStepView(permissionManager: appState.permissionManager)
         case .automation:
             AutomationStepView(permissionManager: appState.permissionManager)
         case .ready:
@@ -76,6 +78,7 @@ struct OnboardingView: View {
 enum OnboardingStep: CaseIterable {
     case welcome
     case accessibility
+    case screenRecording
     case automation
     case ready
 }
@@ -220,6 +223,80 @@ struct AccessibilityStepView: View {
     }
 }
 
+// MARK: - Screen Recording Step
+
+struct ScreenRecordingStepView: View {
+    @ObservedObject var permissionManager: PermissionManager
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "rectangle.dashed.badge.record")
+                .font(.system(size: 60))
+                .foregroundColor(.accentColor)
+
+            Text("Screen Recording Permission")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("This permission is required to see window titles, which enables tracking of files you're editing, browser tabs, and project context.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            Spacer()
+
+            VStack(spacing: 16) {
+                HStack {
+                    Text("Permission Status")
+                    Spacer()
+                    StatusBadge(status: permissionManager.screenRecordingStatus)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+
+                if permissionManager.screenRecordingStatus != .granted {
+                    Button("Open Screen Recording Settings") {
+                        permissionManager.openSystemPreferences(for: .screenRecording)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Text("Add \"Efficiency Cockpit\" to the list of allowed apps, then click \"Refresh\" below.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    Button("Refresh Status") {
+                        permissionManager.checkScreenRecordingPermission()
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Permission granted!")
+                            .fontWeight(.medium)
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(.horizontal)
+
+            Spacer()
+        }
+        .padding()
+        .onAppear {
+            permissionManager.checkScreenRecordingPermission()
+        }
+    }
+}
+
 // MARK: - Automation Step
 
 struct AutomationStepView: View {
@@ -346,5 +423,5 @@ struct InfoRow: View {
 
 #Preview {
     OnboardingView()
-        .environmentObject(AppState())
+        .environmentObject(AppState.preview)
 }

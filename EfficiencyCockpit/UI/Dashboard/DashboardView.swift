@@ -14,9 +14,6 @@ struct DashboardView: View {
             detailContent
         }
         .navigationTitle("Efficiency Cockpit")
-        .onAppear {
-            appState.activityTracker.configure(modelContext: modelContext)
-        }
     }
 
     private var sidebarContent: some View {
@@ -495,5 +492,5 @@ struct ProjectsView: View {
 
 #Preview {
     DashboardView()
-        .environmentObject(AppState())
+        .environmentObject(AppState.preview)
 }

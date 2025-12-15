@@ -3,9 +3,12 @@ import SwiftData
 
 @main
 struct EfficiencyCockpitApp: App {
-    @StateObject private var appState = AppState()
+    let sharedModelContainer: ModelContainer
 
-    var sharedModelContainer: ModelContainer = {
+    @StateObject private var appState: AppState
+
+    init() {
+        // Create model container first
         let schema = Schema([
             Activity.self,
             AppSession.self,
@@ -28,12 +31,17 @@ struct EfficiencyCockpitApp: App {
             allowsSave: true
         )
 
+        let container: ModelContainer
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            container = try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
-    }()
+        sharedModelContainer = container
+
+        // Create AppState with the container's main context for consistency
+        _appState = StateObject(wrappedValue: AppState(modelContext: container.mainContext))
+    }
 
     var body: some Scene {
         MenuBarExtra {
