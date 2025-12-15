@@ -6,8 +6,11 @@
 pub mod ai;
 pub mod config;
 pub mod db;
+pub mod error;
 pub mod gatekeeper;
 pub mod search;
 pub mod snapshot;
 pub mod utils;
 pub mod watcher;
+
+pub use error::{ConfigError, DatabaseError, Error, Result, SearchError, WatcherError};
