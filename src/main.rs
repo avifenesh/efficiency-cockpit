@@ -76,6 +76,20 @@ enum Commands {
 
     /// Show status information
     Status,
+
+    /// Index files for search
+    Index {
+        /// Directory to index
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Only show what would be indexed (dry run)
+        #[arg(short, long)]
+        dry_run: bool,
+    },
+
+    /// Initialize configuration file
+    Init,
 }
 
 fn main() -> Result<()> {
@@ -118,6 +132,8 @@ fn main() -> Result<()> {
         Commands::Summary => cmd_summary(&db, &config),
         Commands::Nudge => cmd_nudge(&db, &config),
         Commands::Status => cmd_status(&config, &db),
+        Commands::Index { path, dry_run } => cmd_index(&config, &path, dry_run),
+        Commands::Init => cmd_init(),
     }
 }
 
@@ -339,6 +355,149 @@ fn cmd_status(config: &Config, db: &Database) -> Result<()> {
             "disabled"
         }
     );
+
+    Ok(())
+}
+
+/// Index files for search.
+fn cmd_index(config: &Config, path: &PathBuf, dry_run: bool) -> Result<()> {
+    use walkdir::WalkDir;
+
+    let index_path = config
+        .database
+        .path
+        .parent()
+        .unwrap_or(&config.database.path)
+        .join("search_index");
+
+    println!("Indexing files from: {}", path.display());
+    if dry_run {
+        println!("(Dry run - no changes will be made)\n");
+    } else {
+        println!("Index location: {}\n", index_path.display());
+    }
+
+    let mut indexed_count = 0;
+    let mut skipped_count = 0;
+    let mut docs_to_index = Vec::new();
+
+    // Collect files to index
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let file_path = entry.path();
+
+        // Skip directories
+        if file_path.is_dir() {
+            continue;
+        }
+
+        // Check ignore patterns
+        let path_str = file_path.to_string_lossy();
+        let should_ignore = config
+            .ignore_patterns
+            .iter()
+            .any(|pattern| path_str.contains(pattern));
+
+        if should_ignore {
+            skipped_count += 1;
+            continue;
+        }
+
+        // Try to read as text
+        if let Some(doc) = efficiency_cockpit::search::read_file_for_indexing(file_path) {
+            if dry_run {
+                println!("  Would index: {}", doc.path);
+            } else {
+                println!("  Indexing: {}", doc.title);
+            }
+            indexed_count += 1;
+            docs_to_index.push(doc);
+        } else {
+            skipped_count += 1;
+        }
+    }
+
+    // Batch write to index
+    if !dry_run && !docs_to_index.is_empty() {
+        let index = SearchIndex::create_or_open(&index_path)?;
+        let mut writer = index.writer()?;
+        writer.add_documents(&docs_to_index)?;
+        writer.commit()?;
+    }
+
+    println!("\nSummary:");
+    println!("  Files indexed: {}", indexed_count);
+    println!("  Files skipped: {}", skipped_count);
+
+    if dry_run {
+        println!("\nRun without --dry-run to actually index files.");
+    }
+
+    Ok(())
+}
+
+/// Initialize configuration file.
+fn cmd_init() -> Result<()> {
+    let config_path = Config::default_config_path()?;
+
+    if config_path.exists() {
+        println!("Configuration file already exists at:");
+        println!("  {}", config_path.display());
+        println!("\nEdit this file to customize settings.");
+        return Ok(());
+    }
+
+    // Create config directory
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Write default config
+    let default_config = r#"# Efficiency Cockpit Configuration
+
+# Directories to watch for file changes
+directories = [
+    "~/workspace",
+    "~/projects"
+]
+
+# Patterns to ignore (regex)
+ignore_patterns = [
+    "\\.git",
+    "target",
+    "node_modules",
+    "__pycache__",
+    "\\.cache"
+]
+
+[notifications]
+# Hour of day (0-23) to send daily digest
+daily_digest_hour = 20
+
+# Maximum productivity nudges per day
+max_nudges_per_day = 2
+
+# Enable context switch warnings
+enable_context_switch_nudges = true
+
+[database]
+# Maximum snapshots to retain
+max_snapshots = 1000
+
+[ai]
+# Enable AI-powered insights (requires API key in EFFICIENCY_COCKPIT_AI_KEY env var)
+enabled = false
+"#;
+
+    std::fs::write(&config_path, default_config)?;
+
+    println!("Configuration file created at:");
+    println!("  {}", config_path.display());
+    println!("\nEdit this file to customize your settings, then run:");
+    println!("  efficiency-cockpit status");
 
     Ok(())
 }
