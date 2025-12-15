@@ -106,10 +106,21 @@ enum Commands {
         #[arg(short, long, default_value = "0")]
         limit: u32,
     },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, powershell)
+        shell: clap_complete::Shell,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle completions early (no config/db needed)
+    if let Commands::Completions { shell } = cli.command {
+        return cmd_completions(shell);
+    }
 
     // Initialize logging
     let filter = if cli.verbose {
@@ -151,6 +162,7 @@ fn main() -> Result<()> {
         Commands::Index { path, dry_run } => cmd_index(&config, &path, dry_run),
         Commands::Init => cmd_init(),
         Commands::Export { output, format, limit } => cmd_export(&db, &output, &format, limit),
+        Commands::Completions { .. } => unreachable!(),
     }
 }
 
@@ -565,6 +577,18 @@ fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32) -> Resu
         output.display(),
         format
     ));
+
+    Ok(())
+}
+
+/// Generate shell completions.
+fn cmd_completions(shell: clap_complete::Shell) -> Result<()> {
+    use clap::CommandFactory;
+    use clap_complete::generate;
+    use std::io;
+
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "efficiency-cockpit", &mut io::stdout());
 
     Ok(())
 }
