@@ -301,12 +301,13 @@ fn cmd_list(db: &Database, limit: u32) -> Result<()> {
     let snapshots = service.get_recent(limit)?;
 
     if snapshots.is_empty() {
-        println!("No snapshots found.");
+        cli::info("No snapshots found.");
         return Ok(());
     }
 
-    println!("Recent snapshots:\n");
-    for snapshot in snapshots {
+    cli::header(&format!("Recent snapshots (showing {}):", snapshots.len()));
+    println!();
+    for snapshot in &snapshots {
         println!(
             "  {} | {} | {}",
             &snapshot.id[..8],
@@ -319,6 +320,12 @@ fn cmd_list(db: &Database, limit: u32) -> Result<()> {
         if let Some(ref note) = snapshot.notes {
             println!("       note: {}", note);
         }
+    }
+
+    // Hint if at limit
+    if snapshots.len() as u32 == limit {
+        println!();
+        cli::info(&format!("Showing {} snapshots. Use --limit N for more.", limit));
     }
 
     Ok(())
