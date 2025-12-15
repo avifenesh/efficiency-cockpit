@@ -116,6 +116,28 @@ enum Commands {
         /// Shell to generate completions for (bash, zsh, fish, powershell)
         shell: clap_complete::Shell,
     },
+
+    /// Import snapshots from JSON file
+    Import {
+        /// Input JSON file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Skip snapshots that would be duplicates
+        #[arg(long)]
+        skip_duplicates: bool,
+    },
+
+    /// Clean up old snapshots and file events
+    Cleanup {
+        /// Keep only this many recent snapshots
+        #[arg(short, long, default_value = "100")]
+        keep: u32,
+
+        /// Actually delete (without this flag, shows what would be deleted)
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -167,6 +189,8 @@ fn main() -> Result<()> {
         Commands::Init => cmd_init(),
         Commands::Export { output, format, limit, force } => cmd_export(&db, &output, &format, limit, force),
         Commands::Completions { .. } => unreachable!(),
+        Commands::Import { input, skip_duplicates } => cmd_import(&db, &input, skip_duplicates),
+        Commands::Cleanup { keep, confirm } => cmd_cleanup(&db, keep, confirm),
     }
 }
 
@@ -641,6 +665,92 @@ fn cmd_completions(shell: clap_complete::Shell) -> Result<()> {
 
     let mut cmd = Cli::command();
     generate(shell, &mut cmd, "efficiency-cockpit", &mut io::stdout());
+
+    Ok(())
+}
+
+/// Import snapshots from JSON file.
+fn cmd_import(db: &Database, input: &PathBuf, skip_duplicates: bool) -> Result<()> {
+    use efficiency_cockpit::db::Snapshot;
+
+    if !input.exists() {
+        cli::error(&format!("Input file not found: {}", input.display()));
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(input)
+        .with_context(|| format!("Failed to read input file: {}", input.display()))?;
+
+    let snapshots: Vec<Snapshot> = serde_json::from_str(&content)
+        .context("Failed to parse JSON. Ensure the file was exported from efficiency-cockpit.")?;
+
+    if snapshots.is_empty() {
+        cli::warning("No snapshots found in input file.");
+        return Ok(());
+    }
+
+    let existing_ids: std::collections::HashSet<String> = if skip_duplicates {
+        db.get_recent_snapshots(10000)?
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let mut imported = 0;
+    let mut skipped = 0;
+
+    for snapshot in snapshots {
+        if skip_duplicates && existing_ids.contains(&snapshot.id) {
+            skipped += 1;
+            continue;
+        }
+
+        if let Err(e) = db.insert_snapshot(&snapshot) {
+            tracing::warn!("Failed to import snapshot {}: {}", &snapshot.id[..8], e);
+            skipped += 1;
+        } else {
+            imported += 1;
+        }
+    }
+
+    cli::success(&format!("Imported {} snapshots", imported));
+    if skipped > 0 {
+        cli::info(&format!("Skipped {} snapshots (duplicates or errors)", skipped));
+    }
+
+    Ok(())
+}
+
+/// Clean up old snapshots and file events.
+fn cmd_cleanup(db: &Database, keep: u32, confirm: bool) -> Result<()> {
+    let total_snapshots = db.get_recent_snapshots(100000)?.len();
+
+    if total_snapshots as u32 <= keep {
+        cli::success(&format!(
+            "Nothing to clean up. Currently have {} snapshots (keeping {})",
+            total_snapshots, keep
+        ));
+        return Ok(());
+    }
+
+    let to_delete = total_snapshots as u32 - keep;
+
+    if !confirm {
+        cli::warning(&format!(
+            "Would delete {} snapshots (keeping {} most recent)",
+            to_delete, keep
+        ));
+        cli::info("Run with --confirm to actually delete.");
+        return Ok(());
+    }
+
+    let deleted = db.cleanup_old_snapshots(keep)?;
+    cli::success(&format!(
+        "Deleted {} old snapshots. {} remaining.",
+        deleted, keep
+    ));
 
     Ok(())
 }

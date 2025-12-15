@@ -134,6 +134,28 @@ efficiency-cockpit completions zsh > ~/.zfunc/_efficiency-cockpit
 efficiency-cockpit completions fish > ~/.config/fish/completions/efficiency-cockpit.fish
 ```
 
+### `import`
+Import snapshots from a JSON file (exported with `export`).
+
+```bash
+# Import all snapshots
+efficiency-cockpit import --input snapshots.json
+
+# Skip duplicates (by ID)
+efficiency-cockpit import --input snapshots.json --skip-duplicates
+```
+
+### `cleanup`
+Clean up old snapshots to free disk space.
+
+```bash
+# Preview what would be deleted
+efficiency-cockpit cleanup --keep 100
+
+# Actually delete (keep 100 most recent)
+efficiency-cockpit cleanup --keep 100 --confirm
+```
+
 ## Configuration
 
 Configuration file location:
