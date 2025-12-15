@@ -106,6 +106,34 @@ Get productivity nudges and suggestions.
 efficiency-cockpit nudge
 ```
 
+### `export`
+Export snapshots to JSON or CSV file.
+
+```bash
+# Export to JSON (default)
+efficiency-cockpit export --output snapshots.json
+
+# Export to CSV
+efficiency-cockpit export --output snapshots.csv --format csv
+
+# Limit number of snapshots
+efficiency-cockpit export --output recent.json --limit 50
+```
+
+### `completions`
+Generate shell completions for bash, zsh, fish, or PowerShell.
+
+```bash
+# Bash
+efficiency-cockpit completions bash > ~/.bash_completion.d/efficiency-cockpit
+
+# Zsh
+efficiency-cockpit completions zsh > ~/.zfunc/_efficiency-cockpit
+
+# Fish
+efficiency-cockpit completions fish > ~/.config/fish/completions/efficiency-cockpit.fish
+```
+
 ## Configuration
 
 Configuration file location:
@@ -149,8 +177,10 @@ enabled = false
 ```
 src/
 ├── main.rs       # CLI entry point
+├── cli.rs        # CLI output helpers (colorization)
 ├── config.rs     # Configuration management
 ├── db.rs         # SQLite database layer
+├── error.rs      # Custom error types
 ├── watcher.rs    # File system monitoring
 ├── snapshot.rs   # Context capture
 ├── search.rs     # Full-text search (Tantivy)
