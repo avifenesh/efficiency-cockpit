@@ -92,19 +92,23 @@ enum Commands {
     /// Initialize configuration file
     Init,
 
-    /// Export snapshots to file
+    /// Export snapshots to file (max 10000 when limit=0)
     Export {
         /// Output file path
         #[arg(short, long)]
         output: PathBuf,
 
         /// Export format (json or csv)
-        #[arg(short, long, default_value = "json")]
+        #[arg(short = 'F', long, default_value = "json")]
         format: String,
 
-        /// Number of snapshots to export (0 = all)
+        /// Number of snapshots to export (0 = all, max 10000)
         #[arg(short, long, default_value = "0")]
         limit: u32,
+
+        /// Overwrite existing output file
+        #[arg(long)]
+        force: bool,
     },
 
     /// Generate shell completions
@@ -161,7 +165,7 @@ fn main() -> Result<()> {
         Commands::Status => cmd_status(&config, &db),
         Commands::Index { path, dry_run } => cmd_index(&config, &path, dry_run),
         Commands::Init => cmd_init(),
-        Commands::Export { output, format, limit } => cmd_export(&db, &output, &format, limit),
+        Commands::Export { output, format, limit, force } => cmd_export(&db, &output, &format, limit, force),
         Commands::Completions { .. } => unreachable!(),
     }
 }
@@ -529,15 +533,34 @@ enabled = false
 }
 
 /// Export snapshots to file (JSON or CSV).
-fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32) -> Result<()> {
+fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32, force: bool) -> Result<()> {
     use std::io::Write;
 
-    let actual_limit = if limit == 0 { 10000 } else { limit };
+    // Check if file exists and warn if not using --force
+    if output.exists() && !force {
+        cli::error(&format!(
+            "Output file '{}' already exists. Use --force to overwrite.",
+            output.display()
+        ));
+        return Ok(());
+    }
+
+    // Limit of 0 means "all", capped at 10000 for safety
+    const MAX_EXPORT_LIMIT: u32 = 10000;
+    let actual_limit = if limit == 0 { MAX_EXPORT_LIMIT } else { limit };
     let snapshots = db.get_recent_snapshots(actual_limit)?;
 
     if snapshots.is_empty() {
         cli::warning("No snapshots to export.");
         return Ok(());
+    }
+
+    // Warn if export was truncated
+    if limit == 0 && snapshots.len() as u32 == MAX_EXPORT_LIMIT {
+        cli::warning(&format!(
+            "Export limited to {} snapshots. Use --limit to export a specific number.",
+            MAX_EXPORT_LIMIT
+        ));
     }
 
     let content = match format.to_lowercase().as_str() {
@@ -551,12 +574,12 @@ fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32) -> Resu
             for s in &snapshots {
                 csv.push_str(&format!(
                     "{},{},{},{},{},{}\n",
-                    s.id,
-                    s.timestamp.to_rfc3339(),
-                    s.active_file.as_deref().unwrap_or(""),
-                    s.active_directory.as_deref().unwrap_or(""),
-                    s.git_branch.as_deref().unwrap_or(""),
-                    s.notes.as_deref().unwrap_or("").replace(',', ";").replace('\n', " ")
+                    csv_escape(&s.id),
+                    csv_escape(&s.timestamp.to_rfc3339()),
+                    csv_escape(s.active_file.as_deref().unwrap_or("")),
+                    csv_escape(s.active_directory.as_deref().unwrap_or("")),
+                    csv_escape(s.git_branch.as_deref().unwrap_or("")),
+                    csv_escape(s.notes.as_deref().unwrap_or(""))
                 ));
             }
             csv
@@ -579,6 +602,35 @@ fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32) -> Resu
     ));
 
     Ok(())
+}
+
+/// Escape a value for CSV according to RFC 4180.
+/// Also sanitizes formula injection characters.
+fn csv_escape(value: &str) -> String {
+    // Sanitize formula injection - prefix dangerous characters with a single quote
+    let sanitized = if value.starts_with('=')
+        || value.starts_with('+')
+        || value.starts_with('-')
+        || value.starts_with('@')
+        || value.starts_with('\t')
+        || value.starts_with('\r')
+    {
+        format!("'{}", value)
+    } else {
+        value.to_string()
+    };
+
+    // Check if quoting is needed (contains special characters)
+    if sanitized.contains(',')
+        || sanitized.contains('"')
+        || sanitized.contains('\n')
+        || sanitized.contains('\r')
+    {
+        // Escape double quotes by doubling them and wrap in quotes
+        format!("\"{}\"", sanitized.replace('"', "\"\""))
+    } else {
+        sanitized
+    }
 }
 
 /// Generate shell completions.

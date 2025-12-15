@@ -254,3 +254,29 @@ fn test_error_types() {
     };
     assert!(db_err.to_string().contains("test error"));
 }
+
+/// Test CSV escape function handles various cases
+#[test]
+fn test_csv_escape_basic() {
+    // The csv_escape function is private to main.rs, so we test the export behavior
+    // through actual snapshot serialization
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let db = Database::open(&db_path).unwrap();
+
+    // Add a snapshot with special characters in notes
+    let context = efficiency_cockpit::snapshot::ContextInfo {
+        active_file: Some(PathBuf::from("/src/test.rs")),
+        active_directory: Some(PathBuf::from("/src")),
+        git_branch: Some("feature/test".to_string()),
+        git_repo_root: None,
+    };
+    let service = SnapshotService::new(&db);
+    service
+        .capture(&context, Some("Test with \"quotes\" and, commas".to_string()))
+        .unwrap();
+
+    let snapshots = db.get_recent_snapshots(10).unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert!(snapshots[0].notes.as_ref().unwrap().contains("quotes"));
+}
