@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
 use efficiency_cockpit::{
@@ -276,7 +276,7 @@ fn cmd_watch(config: &Config, db: &Database) -> Result<()> {
 }
 
 /// Capture a snapshot of current context.
-fn cmd_snapshot(db: &Database, path: &PathBuf, note: Option<String>) -> Result<()> {
+fn cmd_snapshot(db: &Database, path: &Path, note: Option<String>) -> Result<()> {
     let service = SnapshotService::new(db);
     let context = context_from_path(path);
 
