@@ -1,223 +1,147 @@
 # Efficiency Cockpit
 
-A personal productivity CLI tool for context capture, search, and AI-assisted insights.
+A native macOS menu bar app for **passive developer productivity tracking** with AI integration via MCP (Model Context Protocol) for Claude Code.
 
 ## Features
 
-- **File Watching**: Monitor directories for changes and automatically capture context
-- **Context Snapshots**: Capture work context including active files, directories, and git branches
-- **Full-Text Search**: Index and search your files using Tantivy
-- **Productivity Nudges**: Get suggestions based on activity patterns
-- **Daily Summaries**: Track your work activity over time
-- **AI Insights**: Rule-based (and optionally AI-powered) productivity insights
+- **Passive Activity Tracking** - Automatically tracks your work without interrupting your flow
+  - App switches and window focus changes
+  - Browser navigation (Chrome, Safari, Arc, Firefox, Brave, Edge)
+  - IDE file tracking (VS Code, Cursor, Xcode, JetBrains IDEs, Sublime, Zed)
+  - Terminal commands (Terminal, iTerm2, Warp, Kitty, Alacritty)
+  - Git commits and branch switches
+  - AI tool usage detection (Claude, ChatGPT, Copilot, etc.)
+
+- **MCP Server Integration** - Query your productivity data directly from Claude Code
+  - `get_current_activity` - What you're working on right now
+  - `get_today_activities` - All activities from today
+  - `get_time_on_project` - Time spent on specific projects
+  - `search_activities` - Search by keyword, app, or project
+  - `get_productivity_score` - Calculate productivity metrics
+
+- **Built-in "Ask Claude"** - Chat with Claude about your productivity directly from the app
+
+- **Dashboard Views**
+  - Activity Feed - Real-time list of tracked activities
+  - Time Tracking - Visual breakdown of time by app
+  - Trends - Activity patterns and statistics
+  - Projects - Detected projects and activity counts
+
+## Requirements
+
+- macOS 14.0 (Sonoma) or later
+- Accessibility permission (for window tracking)
+- Automation permission (for browser tab tracking)
+- Claude Code CLI (for "Ask Claude" feature)
 
 ## Installation
 
-```bash
-# Build from source
-cargo build --release
-
-# The binary will be at target/release/efficiency_cockpit
-```
-
-## Quick Start
+### Build from Source
 
 ```bash
-# Initialize configuration
-efficiency-cockpit init
+# Clone the repository
+git clone https://github.com/yourusername/efficiency-cockpit.git
+cd efficiency-cockpit
 
-# Edit the generated config file to add your directories
-# Then check status
-efficiency-cockpit status
+# Build with Swift Package Manager
+swift build -c release
 
-# Capture a snapshot
-efficiency-cockpit snapshot --note "Working on feature X"
+# Create app bundle
+make app
 
-# Start the file watcher
-efficiency-cockpit watch
+# The app will be at ~/Applications/Efficiency Cockpit.app
 ```
 
-## Commands
+### Configure MCP for Claude Code
 
-### `init`
-Create a default configuration file.
+Add to your `~/.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "efficiency-cockpit": {
+      "command": "~/Applications/Efficiency Cockpit.app/Contents/MacOS/EfficiencyCockpitMCPServer",
+      "args": []
+    }
+  }
+}
+```
+
+Enable in `~/.claude/settings.json`:
+
+```json
+{
+  "enabledMcpjsonServers": ["efficiency-cockpit"]
+}
+```
+
+## Project Structure
+
+```
+EfficiencyCockpit/
+├── App/                       # App entry point and state
+├── Core/
+│   ├── Models/               # SwiftData models
+│   │   ├── Activity.swift
+│   │   ├── AppSession.swift
+│   │   ├── ProductivityInsight.swift
+│   │   └── DailySummary.swift
+│   └── Services/
+│       ├── ActivityTracker/  # Tracking services
+│       │   ├── ActivityTrackingService.swift
+│       │   ├── WindowTracker.swift
+│       │   ├── BrowserTabTracker.swift
+│       │   ├── IDEFileTracker.swift
+│       │   ├── GitActivityTracker.swift
+│       │   └── AIToolUsageTracker.swift
+│       ├── Permissions/      # macOS permissions
+│       └── ClaudeService.swift
+└── UI/
+    ├── MenuBar/              # Menu bar interface
+    ├── Dashboard/            # Main dashboard
+    ├── Settings/             # Settings views
+    └── Onboarding/           # First-run experience
+
+EfficiencyCockpitMCPServer/   # Standalone MCP server
+├── main.swift
+└── DataAccess.swift
+```
+
+## Usage
+
+1. **Launch the app** - It appears in your menu bar
+2. **Grant permissions** - Allow Accessibility and Automation access when prompted
+3. **Start tracking** - Toggle tracking on from the menu bar
+4. **View dashboard** - Click the menu bar icon to open the dashboard
+5. **Ask Claude** - Use the built-in chat to ask about your productivity
+
+### Example Claude Queries
+
+- "What have I been working on today?"
+- "How much time did I spend in VS Code?"
+- "Which project took most of my time this week?"
+- "Give me insights about my work patterns"
+
+## Privacy
+
+All data is stored locally on your Mac using SwiftData. No data is sent to external servers except when using the "Ask Claude" feature, which sends activity summaries to Claude via the CLI.
+
+## Development
 
 ```bash
-efficiency-cockpit init
-```
+# Build debug version
+swift build
 
-### `status`
-Show current status and configuration.
+# Run tests
+swift test
 
-```bash
-efficiency-cockpit status
-```
+# Build release
+swift build -c release
 
-### `snapshot`
-Capture a snapshot of current context.
-
-```bash
-efficiency-cockpit snapshot [PATH] --note "Optional note"
-```
-
-### `list`
-List recent snapshots.
-
-```bash
-efficiency-cockpit list --limit 20
-```
-
-### `watch`
-Start the file watcher daemon.
-
-```bash
-efficiency-cockpit watch
-```
-
-### `index`
-Index files for search.
-
-```bash
-# Preview what would be indexed
-efficiency-cockpit index --dry-run ./src
-
-# Actually index the files
-efficiency-cockpit index ./src
-```
-
-### `search`
-Search indexed content.
-
-```bash
-efficiency-cockpit search "query string" --limit 10
-```
-
-### `summary`
-Show daily activity summary.
-
-```bash
-efficiency-cockpit summary
-```
-
-### `nudge`
-Get productivity nudges and suggestions.
-
-```bash
-efficiency-cockpit nudge
-```
-
-### `export`
-Export snapshots to JSON or CSV file.
-
-```bash
-# Export to JSON (default)
-efficiency-cockpit export --output snapshots.json
-
-# Export to CSV
-efficiency-cockpit export --output snapshots.csv --format csv
-
-# Limit number of snapshots
-efficiency-cockpit export --output recent.json --limit 50
-```
-
-### `completions`
-Generate shell completions for bash, zsh, fish, or PowerShell.
-
-```bash
-# Bash
-efficiency-cockpit completions bash > ~/.bash_completion.d/efficiency-cockpit
-
-# Zsh
-efficiency-cockpit completions zsh > ~/.zfunc/_efficiency-cockpit
-
-# Fish
-efficiency-cockpit completions fish > ~/.config/fish/completions/efficiency-cockpit.fish
-```
-
-### `import`
-Import snapshots from a JSON file (exported with `export`).
-
-```bash
-# Import all snapshots
-efficiency-cockpit import --input snapshots.json
-
-# Skip duplicates (by ID)
-efficiency-cockpit import --input snapshots.json --skip-duplicates
-```
-
-### `cleanup`
-Clean up old snapshots to free disk space.
-
-```bash
-# Preview what would be deleted
-efficiency-cockpit cleanup --keep 100
-
-# Actually delete (keep 100 most recent)
-efficiency-cockpit cleanup --keep 100 --confirm
-```
-
-### `stats`
-Show database statistics and storage usage.
-
-```bash
-efficiency-cockpit stats
-```
-
-## Configuration
-
-Configuration file location:
-- macOS: `~/Library/Application Support/efficiency_cockpit/config.toml`
-- Linux: `~/.local/share/efficiency_cockpit/config.toml`
-
-Example configuration:
-
-```toml
-# Directories to watch
-directories = [
-    "~/workspace",
-    "~/projects"
-]
-
-# Patterns to ignore (regex)
-ignore_patterns = [
-    "\\.git",
-    "target",
-    "node_modules"
-]
-
-[notifications]
-daily_digest_hour = 20
-max_nudges_per_day = 2
-enable_context_switch_nudges = true
-
-[database]
-max_snapshots = 1000
-
-[ai]
-enabled = false
-```
-
-## Environment Variables
-
-- `EFFICIENCY_COCKPIT_AI_KEY`: API key for AI-powered insights (optional)
-
-## Architecture
-
-```
-src/
-├── main.rs       # CLI entry point
-├── cli.rs        # CLI output helpers (colorization)
-├── config.rs     # Configuration management
-├── db.rs         # SQLite database layer
-├── error.rs      # Custom error types
-├── watcher.rs    # File system monitoring
-├── snapshot.rs   # Context capture
-├── search.rs     # Full-text search (Tantivy)
-├── gatekeeper.rs # Nudge/decision support
-├── ai.rs         # AI insights
-└── utils.rs      # Helper functions
+# Create app bundle
+make app
 ```
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details.
