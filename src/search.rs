@@ -197,13 +197,9 @@ impl SearchIndexWriter {
     }
 }
 
-/// Read file content for indexing.
+/// Read file content for indexing (only indexes text files).
 pub fn read_file_for_indexing(path: &Path) -> Option<IndexDocument> {
-    // Only index text files
-    let extension = path.extension()?.to_str()?;
-    let text_extensions = ["rs", "txt", "md", "json", "toml", "yaml", "yml", "py", "js", "ts", "html", "css"];
-
-    if !text_extensions.contains(&extension) {
+    if !crate::utils::is_text_file(path) {
         return None;
     }
 

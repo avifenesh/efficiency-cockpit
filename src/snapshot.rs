@@ -13,13 +13,11 @@ pub struct SnapshotService<'a> {
     db: &'a Database,
 }
 
-/// Current context information that can be captured.
 #[derive(Debug, Clone, Default)]
 pub struct ContextInfo {
     pub active_file: Option<PathBuf>,
     pub active_directory: Option<PathBuf>,
     pub git_branch: Option<String>,
-    pub git_repo_root: Option<PathBuf>,
 }
 
 impl<'a> SnapshotService<'a> {
@@ -83,26 +81,6 @@ pub fn detect_git_branch(dir: &Path) -> Option<String> {
     None
 }
 
-/// Find the git repository root for a directory.
-pub fn find_git_root(dir: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let root = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string();
-        if !root.is_empty() {
-            return Some(PathBuf::from(root));
-        }
-    }
-
-    None
-}
-
 /// Build context info from a file path.
 pub fn context_from_path(path: &Path) -> ContextInfo {
     let dir = if path.is_dir() {
@@ -118,13 +96,11 @@ pub fn context_from_path(path: &Path) -> ContextInfo {
     };
 
     let git_branch = detect_git_branch(&dir);
-    let git_repo_root = find_git_root(&dir);
 
     ContextInfo {
         active_file,
         active_directory: Some(dir),
         git_branch,
-        git_repo_root,
     }
 }
 
@@ -177,7 +153,6 @@ mod tests {
             active_file: Some(PathBuf::from("/src/main.rs")),
             active_directory: Some(PathBuf::from("/src")),
             git_branch: Some("main".to_string()),
-            git_repo_root: None,
         };
 
         let snapshot = service.capture(&context, Some("Working on tests".to_string())).unwrap();

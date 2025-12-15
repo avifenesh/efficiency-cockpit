@@ -29,8 +29,7 @@ fn test_full_snapshot_workflow() {
             active_file: Some(PathBuf::from(format!("/src/file{}.rs", i))),
             active_directory: Some(PathBuf::from("/src")),
             git_branch: Some("main".to_string()),
-            git_repo_root: None,
-        };
+                    };
         service.capture(&context, Some(format!("Note {}", i))).unwrap();
     }
 
@@ -212,8 +211,7 @@ fn test_snapshot_json_serialization() {
             active_file: Some(PathBuf::from(format!("/src/file{}.rs", i))),
             active_directory: Some(PathBuf::from("/src")),
             git_branch: Some("main".to_string()),
-            git_repo_root: None,
-        };
+                    };
         service.capture(&context, Some(format!("Test note {}", i))).unwrap();
     }
 
@@ -279,8 +277,7 @@ fn test_csv_escape_basic() {
         active_file: Some(PathBuf::from("/src/test.rs")),
         active_directory: Some(PathBuf::from("/src")),
         git_branch: Some("feature/test".to_string()),
-        git_repo_root: None,
-    };
+            };
     let service = SnapshotService::new(&db);
     service
         .capture(&context, Some("Test with \"quotes\" and, commas".to_string()))

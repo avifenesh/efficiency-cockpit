@@ -370,16 +370,16 @@ fn cmd_search(config: &Config, query: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
-/// Show activity summary.
+fn gatekeeper_config(config: &Config) -> GatekeeperConfig {
+    GatekeeperConfig {
+        max_nudges_per_day: config.notifications.max_nudges_per_day,
+        enable_context_switch_nudges: config.notifications.enable_context_switch_nudges,
+        ..Default::default()
+    }
+}
+
 fn cmd_summary(db: &Database, config: &Config) -> Result<()> {
-    let gatekeeper = Gatekeeper::new(
-        db,
-        GatekeeperConfig {
-            max_nudges_per_day: config.notifications.max_nudges_per_day,
-            enable_context_switch_nudges: config.notifications.enable_context_switch_nudges,
-            ..Default::default()
-        },
-    );
+    let gatekeeper = Gatekeeper::new(db, gatekeeper_config(config));
 
     let summary = gatekeeper.daily_summary(chrono::Utc::now());
 
@@ -399,16 +399,8 @@ fn cmd_summary(db: &Database, config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Get nudges and suggestions.
 fn cmd_nudge(db: &Database, config: &Config) -> Result<()> {
-    let gatekeeper = Gatekeeper::new(
-        db,
-        GatekeeperConfig {
-            max_nudges_per_day: config.notifications.max_nudges_per_day,
-            enable_context_switch_nudges: config.notifications.enable_context_switch_nudges,
-            ..Default::default()
-        },
-    );
+    let gatekeeper = Gatekeeper::new(db, gatekeeper_config(config));
 
     let nudges = gatekeeper.analyze();
 

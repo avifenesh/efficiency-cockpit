@@ -1,6 +1,4 @@
-//! Database layer for the Efficiency Cockpit.
-//!
-//! Provides SQLite storage for snapshots, file events, and activity tracking.
+//! SQLite storage for snapshots, file events, and activity tracking.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -8,12 +6,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use uuid::Uuid;
 
-/// Database connection wrapper.
 pub struct Database {
     conn: Connection,
 }
 
-/// A snapshot of work context at a point in time.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub id: String,
@@ -24,7 +20,13 @@ pub struct Snapshot {
     pub notes: Option<String>,
 }
 
-/// A file change event.
+/// Parse RFC3339 timestamp, falling back to now on error.
+fn parse_timestamp(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
+}
+
 #[derive(Debug, Clone)]
 pub struct FileEvent {
     pub id: String,
@@ -156,9 +158,7 @@ impl Database {
             |row| {
                 Ok(Snapshot {
                     id: row.get(0)?,
-                    timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    timestamp: parse_timestamp(&row.get::<_, String>(1)?),
                     active_file: row.get(2)?,
                     active_directory: row.get(3)?,
                     git_branch: row.get(4)?,
@@ -180,9 +180,7 @@ impl Database {
         let snapshots = stmt.query_map(params![limit], |row| {
             Ok(Snapshot {
                 id: row.get(0)?,
-                timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                timestamp: parse_timestamp(&row.get::<_, String>(1)?),
                 active_file: row.get(2)?,
                 active_directory: row.get(3)?,
                 git_branch: row.get(4)?,
@@ -220,9 +218,7 @@ impl Database {
         let events = stmt.query_map(params![since.to_rfc3339(), until.to_rfc3339()], |row| {
             Ok(FileEvent {
                 id: row.get(0)?,
-                timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                timestamp: parse_timestamp(&row.get::<_, String>(1)?),
                 path: row.get(2)?,
                 event_type: FileEventType::from_str(&row.get::<_, String>(3)?)
                     .unwrap_or(FileEventType::Modified),
