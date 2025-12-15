@@ -4,6 +4,7 @@
 //! AI-assisted insights, and decision support.
 
 pub mod ai;
+pub mod cli;
 pub mod config;
 pub mod db;
 pub mod error;

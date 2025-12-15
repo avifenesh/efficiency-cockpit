@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 use efficiency_cockpit::{
+    cli,
     config::Config,
     db::Database,
     gatekeeper::{Gatekeeper, GatekeeperConfig},
@@ -177,21 +178,21 @@ fn cmd_snapshot(db: &Database, path: &PathBuf, note: Option<String>) -> Result<(
 
     let snapshot = service.capture(&context, note)?;
 
-    println!("Snapshot captured:");
-    println!("  ID: {}", snapshot.id);
-    println!("  Time: {}", format_local_time(snapshot.timestamp));
+    cli::success("Snapshot captured:");
+    cli::key_value("ID", &snapshot.id);
+    cli::key_value("Time", &format_local_time(snapshot.timestamp));
 
     if let Some(ref file) = snapshot.active_file {
-        println!("  File: {}", file);
+        cli::key_value("File", file);
     }
     if let Some(ref dir) = snapshot.active_directory {
-        println!("  Directory: {}", dir);
+        cli::key_value("Directory", dir);
     }
     if let Some(ref branch) = snapshot.git_branch {
-        println!("  Git branch: {}", branch);
+        cli::key_value("Git branch", branch);
     }
     if let Some(ref notes) = snapshot.notes {
-        println!("  Note: {}", notes);
+        cli::key_value("Note", notes);
     }
 
     Ok(())
@@ -290,18 +291,19 @@ fn cmd_nudge(db: &Database, config: &Config) -> Result<()> {
     let nudges = gatekeeper.analyze();
 
     if nudges.is_empty() {
-        println!("No nudges right now. Keep up the good work!");
+        cli::success("No nudges right now. Keep up the good work!");
         return Ok(());
     }
 
-    println!("Nudges & Suggestions:\n");
+    cli::header("Nudges & Suggestions:");
+    println!();
     for nudge in nudges {
         let priority = match nudge.priority {
-            efficiency_cockpit::gatekeeper::NudgePriority::High => "[HIGH]",
-            efficiency_cockpit::gatekeeper::NudgePriority::Medium => "[MEDIUM]",
-            efficiency_cockpit::gatekeeper::NudgePriority::Low => "[LOW]",
+            efficiency_cockpit::gatekeeper::NudgePriority::High => "HIGH",
+            efficiency_cockpit::gatekeeper::NudgePriority::Medium => "MEDIUM",
+            efficiency_cockpit::gatekeeper::NudgePriority::Low => "LOW",
         };
-        println!("  {} {}", priority, nudge.message);
+        println!("  {} {}", cli::priority_badge(priority), nudge.message);
     }
 
     Ok(())
@@ -309,51 +311,47 @@ fn cmd_nudge(db: &Database, config: &Config) -> Result<()> {
 
 /// Show status information.
 fn cmd_status(config: &Config, db: &Database) -> Result<()> {
-    println!("Efficiency Cockpit Status\n");
+    cli::header("Efficiency Cockpit Status");
+    println!();
 
     // Config status
-    println!("Configuration:");
+    cli::header("Configuration:");
     match Config::default_config_path() {
         Ok(path) => {
             if path.exists() {
-                println!("  Config file: {} (found)", path.display());
+                cli::key_value("Config file", &format!("{} (found)", path.display()));
             } else {
-                println!("  Config file: {} (not found, using defaults)", path.display());
+                cli::key_value("Config file", &format!("{} (not found, using defaults)", path.display()));
             }
         }
-        Err(_) => println!("  Config file: using defaults"),
+        Err(_) => cli::key_value("Config file", "using defaults"),
     }
 
-    println!("  Watched directories: {}", config.directories.len());
+    cli::key_value("Watched directories", &config.directories.len().to_string());
     for dir in &config.directories {
-        let status = if dir.exists() { "OK" } else { "MISSING" };
-        println!("    - {} [{}]", dir.display(), status);
+        cli::status(&dir.display().to_string(), dir.exists());
     }
 
     // Database status
-    println!("\nDatabase:");
-    println!("  Path: {}", config.database.path.display());
+    println!();
+    cli::header("Database:");
+    cli::key_value("Path", &config.database.path.display().to_string());
 
     let snapshot_count = db.get_recent_snapshots(1000)?.len();
-    println!("  Snapshots: {}", snapshot_count);
+    cli::key_value("Snapshots", &snapshot_count.to_string());
 
     // Notification settings
-    println!("\nNotifications:");
-    println!(
-        "  Daily digest hour: {}:00",
-        config.notifications.daily_digest_hour
-    );
-    println!(
-        "  Max nudges per day: {}",
-        config.notifications.max_nudges_per_day
-    );
-    println!(
-        "  Context switch nudges: {}",
+    println!();
+    cli::header("Notifications:");
+    cli::key_value("Daily digest hour", &format!("{}:00", config.notifications.daily_digest_hour));
+    cli::key_value("Max nudges per day", &config.notifications.max_nudges_per_day.to_string());
+    cli::key_value(
+        "Context switch nudges",
         if config.notifications.enable_context_switch_nudges {
             "enabled"
         } else {
             "disabled"
-        }
+        },
     );
 
     Ok(())
