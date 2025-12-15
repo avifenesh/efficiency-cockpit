@@ -12,9 +12,20 @@ struct EfficiencyCockpitApp: App {
             ProductivityInsight.self,
             DailySummary.self
         ])
+
+        // Use a fixed location so MCP server can access the data
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let storeDirectory = appSupport.appendingPathComponent("EfficiencyCockpit")
+
+        // Create directory if needed
+        try? FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+
+        let storeURL = storeDirectory.appendingPathComponent("default.store")
+
         let modelConfiguration = ModelConfiguration(
             schema: schema,
-            isStoredInMemoryOnly: false
+            url: storeURL,
+            allowsSave: true
         )
 
         do {

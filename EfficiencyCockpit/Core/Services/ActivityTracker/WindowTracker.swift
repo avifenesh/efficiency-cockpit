@@ -140,14 +140,25 @@ final class WindowTracker {
 
     // MARK: - Utility
 
-    func extractFilePathFromTitle(_ title: String?, bundleId: String?) -> String? {
-        guard let title = title else { return nil }
+    /// VSCode-like IDEs that use "filename — project" format
+    private static let vscodeIDEs = [
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92", // Cursor
+        "dev.zed.Zed"
+    ]
 
-        // VSCode/Cursor: "filename.ext — project-name"
-        if bundleId == "com.microsoft.VSCode" || bundleId == "com.todesktop.230313mzl4w4u92" {
+    func extractFilePathFromTitle(_ title: String?, bundleId: String?) -> String? {
+        guard let title = title, let bundleId = bundleId else { return nil }
+
+        // VSCode/Cursor/Zed: "filename.ext — project-name"
+        if Self.vscodeIDEs.contains(bundleId) {
             if let dashIndex = title.range(of: " — ") {
                 let filename = String(title[..<dashIndex.lowerBound])
-                return filename
+                // Only return if it looks like a filename
+                if filename.contains(".") && !filename.hasPrefix("[") {
+                    return filename
+                }
             }
         }
 
@@ -155,7 +166,19 @@ final class WindowTracker {
         if bundleId == "com.apple.dt.Xcode" {
             if let dashIndex = title.range(of: " — ") {
                 let filename = String(title[..<dashIndex.lowerBound])
-                return filename
+                if filename.contains(".") {
+                    return filename
+                }
+            }
+        }
+
+        // JetBrains: "project – filename.ext"
+        if bundleId.hasPrefix("com.jetbrains.") {
+            if let dashIndex = title.range(of: " – ") {
+                let afterDash = String(title[dashIndex.upperBound...])
+                if afterDash.contains(".") && !afterDash.contains("[") {
+                    return afterDash.trimmingCharacters(in: .whitespaces)
+                }
             }
         }
 
@@ -163,12 +186,16 @@ final class WindowTracker {
     }
 
     func extractProjectFromTitle(_ title: String?, bundleId: String?) -> String? {
-        guard let title = title else { return nil }
+        guard let title = title, let bundleId = bundleId else { return nil }
 
-        // VSCode/Cursor: "filename.ext — project-name"
-        if bundleId == "com.microsoft.VSCode" || bundleId == "com.todesktop.230313mzl4w4u92" {
+        // VSCode/Cursor/Zed: "filename.ext — project-name"
+        if Self.vscodeIDEs.contains(bundleId) {
             if let dashIndex = title.range(of: " — ") {
-                let project = String(title[dashIndex.upperBound...])
+                var project = String(title[dashIndex.upperBound...])
+                // Remove suffixes like "[Extension Development Host]"
+                if let bracketIndex = project.range(of: " [") {
+                    project = String(project[..<bracketIndex.lowerBound])
+                }
                 return project.trimmingCharacters(in: .whitespaces)
             }
         }
@@ -179,6 +206,18 @@ final class WindowTracker {
                 let project = String(title[dashIndex.upperBound...])
                 return project.trimmingCharacters(in: .whitespaces)
             }
+        }
+
+        // JetBrains: "project – filename.ext" or "project [path]"
+        if bundleId.hasPrefix("com.jetbrains.") {
+            var project = title
+            if let dashIndex = title.range(of: " – ") {
+                project = String(title[..<dashIndex.lowerBound])
+            }
+            if let bracketIndex = project.range(of: " [") {
+                project = String(project[..<bracketIndex.lowerBound])
+            }
+            return project.trimmingCharacters(in: .whitespaces)
         }
 
         return nil
