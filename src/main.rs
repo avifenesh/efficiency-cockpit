@@ -22,7 +22,7 @@ use efficiency_cockpit::{
 #[derive(Parser)]
 #[command(name = "efficiency-cockpit")]
 #[command(about = "A personal productivity tool for context capture and insights")]
-#[command(version)]
+#[command(version, long_version = long_version())]
 struct Cli {
     /// Path to configuration file
     #[arg(short, long, global = true)]
@@ -32,8 +32,26 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
+    /// Quiet mode (minimal output, for scripts)
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Generate long version string with build info.
+fn long_version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        "Build: ",
+        env!("CARGO_PKG_NAME"),
+        " v",
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        "Rust edition: 2021"
+    )
 }
 
 #[derive(Subcommand)]
