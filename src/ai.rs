@@ -15,6 +15,7 @@ pub struct AiService {
 
 /// Configuration for the AI service.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct AiServiceConfig {
     /// Whether AI features are enabled
     pub enabled: bool,
@@ -24,15 +25,6 @@ pub struct AiServiceConfig {
     pub api_key: Option<String>,
 }
 
-impl Default for AiServiceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_endpoint: None,
-            api_key: None,
-        }
-    }
-}
 
 /// An AI-generated insight.
 #[derive(Debug, Clone)]

@@ -78,6 +78,7 @@ impl Default for DatabaseConfig {
 
 /// Configuration for AI integration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AiConfig {
     /// Whether AI features are enabled
     #[serde(default)]
@@ -91,15 +92,6 @@ pub struct AiConfig {
     pub api_key: Option<String>,
 }
 
-impl Default for AiConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_endpoint: None,
-            api_key: None,
-        }
-    }
-}
 
 impl AiConfig {
     /// Load API key from environment variable EFFICIENCY_COCKPIT_AI_KEY
