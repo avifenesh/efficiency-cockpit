@@ -159,14 +159,20 @@ enum Commands {
 
     /// Show database statistics
     Stats,
+
+    /// Generate man page
+    Manpage,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Handle completions early (no config/db needed)
+    // Handle completions and manpage early (no config/db needed)
     if let Commands::Completions { shell } = cli.command {
         return cmd_completions(shell);
+    }
+    if let Commands::Manpage = cli.command {
+        return cmd_manpage();
     }
 
     // Initialize logging
@@ -210,6 +216,7 @@ fn main() -> Result<()> {
         Commands::Init => cmd_init(),
         Commands::Export { output, format, limit, force } => cmd_export(&db, &output, &format, limit, force),
         Commands::Completions { .. } => unreachable!(),
+        Commands::Manpage => unreachable!(),
         Commands::Import { input, skip_duplicates } => cmd_import(&db, &input, skip_duplicates),
         Commands::Cleanup { keep, confirm } => cmd_cleanup(&db, keep, confirm),
         Commands::Stats => cmd_stats(&db, &config),
@@ -903,4 +910,17 @@ fn dir_size(path: &std::path::Path) -> std::io::Result<u64> {
         }
     }
     Ok(total)
+}
+
+/// Generate man page.
+fn cmd_manpage() -> Result<()> {
+    use clap::CommandFactory;
+    use clap_mangen::Man;
+    use std::io;
+
+    let cmd = Cli::command();
+    let man = Man::new(cmd);
+    man.render(&mut io::stdout())?;
+
+    Ok(())
 }

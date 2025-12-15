@@ -17,6 +17,7 @@ notify = "6.1"
 # CLI
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_mangen = "0.2"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
