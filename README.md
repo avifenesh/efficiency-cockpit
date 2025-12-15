@@ -156,6 +156,13 @@ efficiency-cockpit cleanup --keep 100
 efficiency-cockpit cleanup --keep 100 --confirm
 ```
 
+### `stats`
+Show database statistics and storage usage.
+
+```bash
+efficiency-cockpit stats
+```
+
 ## Configuration
 
 Configuration file location:
