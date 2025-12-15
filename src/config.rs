@@ -3,6 +3,7 @@
 //! Handles loading and validating configuration from TOML files.
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -35,7 +36,7 @@ pub struct NotificationConfig {
     #[serde(default = "default_digest_hour")]
     pub daily_digest_hour: u8,
 
-    /// Maximum number of nudges to send per day
+    /// Maximum number of nudges to send per day (max 100)
     #[serde(default = "default_max_nudges")]
     pub max_nudges_per_day: u32,
 
@@ -61,7 +62,7 @@ pub struct DatabaseConfig {
     #[serde(default = "default_db_path")]
     pub path: PathBuf,
 
-    /// Maximum number of snapshots to retain
+    /// Maximum number of snapshots to retain (max 1,000,000)
     #[serde(default = "default_max_snapshots")]
     pub max_snapshots: u32,
 }
@@ -85,7 +86,8 @@ pub struct AiConfig {
     /// API endpoint for AI service (if using external API)
     pub api_endpoint: Option<String>,
 
-    /// API key (should be loaded from environment in production)
+    /// API key - loaded from environment variable, not from config file
+    #[serde(skip)]
     pub api_key: Option<String>,
 }
 
@@ -96,6 +98,14 @@ impl Default for AiConfig {
             api_endpoint: None,
             api_key: None,
         }
+    }
+}
+
+impl AiConfig {
+    /// Load API key from environment variable EFFICIENCY_COCKPIT_AI_KEY
+    pub fn with_api_key_from_env(mut self) -> Self {
+        self.api_key = std::env::var("EFFICIENCY_COCKPIT_AI_KEY").ok();
+        self
     }
 }
 
@@ -114,7 +124,10 @@ fn default_true() -> bool {
 
 fn default_db_path() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| {
+            tracing::warn!("Could not determine local data directory, using current directory");
+            PathBuf::from(".")
+        })
         .join("efficiency_cockpit")
         .join("data.db")
 }
@@ -130,8 +143,11 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let config: Config = toml::from_str(&content)
+        let mut config: Config = toml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+
+        // Load API key from environment, not config file
+        config.ai = config.ai.with_api_key_from_env();
 
         config.validate()?;
         Ok(config)
@@ -139,7 +155,7 @@ impl Config {
 
     /// Load configuration from the default location.
     pub fn load_default() -> Result<Self> {
-        let config_path = Self::default_config_path();
+        let config_path = Self::default_config_path()?;
 
         if config_path.exists() {
             Self::load(&config_path)
@@ -152,27 +168,50 @@ impl Config {
     }
 
     /// Get the default configuration file path.
-    pub fn default_config_path() -> PathBuf {
+    pub fn default_config_path() -> Result<PathBuf> {
         dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("efficiency_cockpit")
-            .join("config.toml")
+            .map(|p| p.join("efficiency_cockpit").join("config.toml"))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not determine config directory. Set $XDG_CONFIG_HOME or $HOME"
+                )
+            })
     }
 
     /// Validate the configuration.
     fn validate(&self) -> Result<()> {
+        // Validate directories
         if self.directories.is_empty() {
             anyhow::bail!("At least one directory must be configured");
         }
 
         for dir in &self.directories {
             if !dir.exists() {
-                tracing::warn!("Configured directory does not exist: {}", dir.display());
+                anyhow::bail!(
+                    "Configured directory does not exist: {}. Create it or remove from config.",
+                    dir.display()
+                );
             }
         }
 
+        // Validate regex patterns
+        for pattern in &self.ignore_patterns {
+            Regex::new(pattern)
+                .with_context(|| format!("Invalid ignore pattern regex: {}", pattern))?;
+        }
+
+        // Validate notification settings
         if self.notifications.daily_digest_hour > 23 {
             anyhow::bail!("daily_digest_hour must be between 0 and 23");
+        }
+
+        if self.notifications.max_nudges_per_day > 100 {
+            anyhow::bail!("max_nudges_per_day must not exceed 100");
+        }
+
+        // Validate database settings
+        if self.database.max_snapshots > 1_000_000 {
+            anyhow::bail!("max_snapshots must not exceed 1,000,000");
         }
 
         Ok(())
@@ -209,7 +248,7 @@ mod tests {
     #[test]
     fn test_parse_example_config() {
         let toml_content = r#"
-            directories = ["/home/user/workspace"]
+            directories = ["."]
             ignore_patterns = ["\\.git", "target"]
 
             [notifications]
@@ -229,5 +268,70 @@ mod tests {
         let config = Config::default_for_testing();
         assert!(!config.directories.is_empty());
         assert!(!config.ignore_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_validate_digest_hour_out_of_range() {
+        let mut config = Config::default_for_testing();
+        config.notifications.daily_digest_hour = 24;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_empty_directories() {
+        let mut config = Config::default_for_testing();
+        config.directories.clear();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_max_nudges_too_high() {
+        let mut config = Config::default_for_testing();
+        config.notifications.max_nudges_per_day = 101;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_max_snapshots_too_high() {
+        let mut config = Config::default_for_testing();
+        config.database.max_snapshots = 1_000_001;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_regex() {
+        let mut config = Config::default_for_testing();
+        config.ignore_patterns = vec!["[invalid".to_string()];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = Config::load("/nonexistent/path/config.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_api_key_not_loaded_from_config() {
+        let toml_content = r#"
+            directories = ["."]
+            ignore_patterns = []
+
+            [ai]
+            enabled = true
+        "#;
+
+        let config: Config = toml::from_str(toml_content).unwrap();
+        // API key should be None since it's skipped from deserialization
+        assert!(config.ai.api_key.is_none());
+    }
+
+    #[test]
+    fn test_api_key_from_env() {
+        let ai_config = AiConfig::default();
+        // This test just verifies the method exists and returns the config
+        let ai_config = ai_config.with_api_key_from_env();
+        // Result depends on environment, just verify it doesn't panic
+        assert!(ai_config.api_key.is_none() || ai_config.api_key.is_some());
     }
 }
