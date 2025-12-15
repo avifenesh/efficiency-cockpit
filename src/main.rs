@@ -2,7 +2,7 @@
 //!
 //! A CLI tool for context capture, search, and AI-assisted insights.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
@@ -91,6 +91,21 @@ enum Commands {
 
     /// Initialize configuration file
     Init,
+
+    /// Export snapshots to file
+    Export {
+        /// Output file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Export format (json or csv)
+        #[arg(short, long, default_value = "json")]
+        format: String,
+
+        /// Number of snapshots to export (0 = all)
+        #[arg(short, long, default_value = "0")]
+        limit: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -135,6 +150,7 @@ fn main() -> Result<()> {
         Commands::Status => cmd_status(&config, &db),
         Commands::Index { path, dry_run } => cmd_index(&config, &path, dry_run),
         Commands::Init => cmd_init(),
+        Commands::Export { output, format, limit } => cmd_export(&db, &output, &format, limit),
     }
 }
 
@@ -496,6 +512,59 @@ enabled = false
     println!("  {}", config_path.display());
     println!("\nEdit this file to customize your settings, then run:");
     println!("  efficiency-cockpit status");
+
+    Ok(())
+}
+
+/// Export snapshots to file (JSON or CSV).
+fn cmd_export(db: &Database, output: &PathBuf, format: &str, limit: u32) -> Result<()> {
+    use std::io::Write;
+
+    let actual_limit = if limit == 0 { 10000 } else { limit };
+    let snapshots = db.get_recent_snapshots(actual_limit)?;
+
+    if snapshots.is_empty() {
+        cli::warning("No snapshots to export.");
+        return Ok(());
+    }
+
+    let content = match format.to_lowercase().as_str() {
+        "json" => {
+            serde_json::to_string_pretty(&snapshots)
+                .context("Failed to serialize snapshots to JSON")?
+        }
+        "csv" => {
+            let mut csv = String::new();
+            csv.push_str("id,timestamp,active_file,active_directory,git_branch,notes\n");
+            for s in &snapshots {
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{}\n",
+                    s.id,
+                    s.timestamp.to_rfc3339(),
+                    s.active_file.as_deref().unwrap_or(""),
+                    s.active_directory.as_deref().unwrap_or(""),
+                    s.git_branch.as_deref().unwrap_or(""),
+                    s.notes.as_deref().unwrap_or("").replace(',', ";").replace('\n', " ")
+                ));
+            }
+            csv
+        }
+        _ => {
+            cli::error(&format!("Unknown format '{}'. Use 'json' or 'csv'.", format));
+            return Ok(());
+        }
+    };
+
+    let mut file = std::fs::File::create(output)
+        .with_context(|| format!("Failed to create output file: {}", output.display()))?;
+    file.write_all(content.as_bytes())?;
+
+    cli::success(&format!(
+        "Exported {} snapshots to {} ({})",
+        snapshots.len(),
+        output.display(),
+        format
+    ));
 
     Ok(())
 }

@@ -14,7 +14,7 @@ pub struct Database {
 }
 
 /// A snapshot of work context at a point in time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Snapshot {
     pub id: String,
     pub timestamp: DateTime<Utc>,
