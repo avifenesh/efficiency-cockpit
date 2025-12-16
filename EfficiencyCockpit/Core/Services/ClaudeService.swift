@@ -166,6 +166,7 @@ final class ClaudeService: ObservableObject {
     /// Find claude binary in common locations
     private func findClaudeBinary() -> String? {
         let possiblePaths = [
+            "\(NSHomeDirectory())/.local/bin/claude",
             "/usr/local/bin/claude",
             "/opt/homebrew/bin/claude",
             "\(NSHomeDirectory())/.npm-global/bin/claude",
