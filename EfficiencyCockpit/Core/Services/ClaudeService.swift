@@ -105,35 +105,46 @@ final class ClaudeService: ObservableObject {
     }
 
     /// Run claude CLI with -p flag
+    /// Uses direct process execution to avoid shell injection vulnerabilities
     private func runClaudeCLI(prompt: String) async throws -> String {
+        // Find claude binary - check common locations
+        let claudePath = findClaudeBinary()
+        guard let claudePath = claudePath else {
+            throw ClaudeError.notInstalled
+        }
+
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let outputPipe = Pipe()
             let errorPipe = Pipe()
+            let inputPipe = Pipe()
 
-            // Run through shell to get proper PATH resolution
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-
-            // Escape the prompt for shell
-            let escapedPrompt = prompt
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-                .replacingOccurrences(of: "$", with: "\\$")
-                .replacingOccurrences(of: "`", with: "\\`")
-
-            process.arguments = ["-i", "-c", "claude -p \"\(escapedPrompt)\""]
+            // Execute claude directly without shell interpolation
+            process.executableURL = URL(fileURLWithPath: claudePath)
+            // Use --print flag with prompt passed via stdin to avoid any escaping issues
+            process.arguments = ["-p", "-"]
+            process.standardInput = inputPipe
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
-            // Set environment
+            // Set environment for node-based CLI tools
             var env = ProcessInfo.processInfo.environment
             env["HOME"] = NSHomeDirectory()
+            // Add common paths where node/npm binaries might be
+            let existingPath = env["PATH"] ?? ""
+            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:\(NSHomeDirectory())/.nvm/versions/node/*/bin:\(existingPath)"
             process.environment = env
 
             currentTask = process
 
             do {
                 try process.run()
+
+                // Write prompt to stdin and close
+                if let promptData = prompt.data(using: .utf8) {
+                    inputPipe.fileHandleForWriting.write(promptData)
+                }
+                inputPipe.fileHandleForWriting.closeFile()
 
                 DispatchQueue.global().async {
                     process.waitUntilExit()
@@ -153,6 +164,55 @@ final class ClaudeService: ObservableObject {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    /// Find claude binary in common locations
+    private func findClaudeBinary() -> String? {
+        let possiblePaths = [
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "\(NSHomeDirectory())/.npm-global/bin/claude",
+            "\(NSHomeDirectory())/node_modules/.bin/claude"
+        ]
+
+        // Also check nvm versions
+        let nvmBase = "\(NSHomeDirectory())/.nvm/versions/node"
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
+            for version in contents {
+                let path = "\(nvmBase)/\(version)/bin/claude"
+                if FileManager.default.isExecutableFile(atPath: path) {
+                    return path
+                }
+            }
+        }
+
+        for path in possiblePaths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        // Fallback: try which command
+        let whichProcess = Process()
+        let whichPipe = Pipe()
+        whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        whichProcess.arguments = ["claude"]
+        whichProcess.standardOutput = whichPipe
+        whichProcess.standardError = FileHandle.nullDevice
+
+        do {
+            try whichProcess.run()
+            whichProcess.waitUntilExit()
+            if whichProcess.terminationStatus == 0 {
+                let data = whichPipe.fileHandleForReading.readDataToEndOfFile()
+                let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let path = path, !path.isEmpty {
+                    return path
+                }
+            }
+        } catch {}
+
+        return nil
     }
 
     /// Cancel current request

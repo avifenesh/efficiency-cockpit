@@ -134,6 +134,11 @@ final class ActivityTrackingService: ObservableObject {
         flushPendingActivities()
     }
 
+    deinit {
+        pollingTask?.cancel()
+        gitPollingTask?.cancel()
+    }
+
     // MARK: - Activity Capture
 
     private func captureActivity() async {
@@ -202,130 +207,29 @@ final class ActivityTrackingService: ObservableObject {
 
     // MARK: - Enhanced Activity Creation
 
-    private func createEnhancedActivity(from windowInfo: WindowInfo) async -> Activity {
-        let activityType = determineActivityType(from: windowInfo)
+    /// Context collected during activity tracking
+    private struct ActivityContext {
         var url: String?
         var filePath: String?
         var projectPath: String?
+    }
 
-        // Enhanced tracking based on app type
+    private func createEnhancedActivity(from windowInfo: WindowInfo) async -> Activity {
+        let activityType = determineActivityType(from: windowInfo)
+        var context = ActivityContext()
+
         if let bundleId = windowInfo.bundleId {
-            // Browser tracking
-            if BrowserTabTracker.supportedBrowsers.keys.contains(bundleId) {
-                if let tab = browserTracker.getActiveTab(for: bundleId) {
-                    url = tab.url
-                    lastBrowserURL = url
-                }
-            }
-
-            // IDE tracking
-            if IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
-                if let context = ideTracker.getIDEContext(bundleId: bundleId, windowTitle: windowInfo.windowTitle) {
-                    filePath = context.fileName
-                    projectPath = context.projectName
-                }
-
-                // Also try to extract from window title directly
-                if filePath == nil {
-                    filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
-                }
-                if projectPath == nil {
-                    projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
-                }
-
-                // Try to find git repo in common project locations
-                if let projectName = projectPath {
-                    let possiblePaths = [
-                        NSHomeDirectory() + "/" + projectName,
-                        NSHomeDirectory() + "/Projects/" + projectName,
-                        NSHomeDirectory() + "/Developer/" + projectName,
-                        NSHomeDirectory() + "/workspace/" + projectName,
-                        NSHomeDirectory() + "/code/" + projectName,
-                        NSHomeDirectory() + "/src/" + projectName
-                    ]
-
-                    for path in possiblePaths {
-                        if let gitActivity = checkGitActivity(at: path) {
-                            let gitAct = Activity(
-                                type: gitActivity.type,
-                                appBundleId: bundleId,
-                                appName: windowInfo.ownerName,
-                                windowTitle: gitActivity.message,
-                                filePath: nil,
-                                projectPath: gitActivity.repoPath
-                            )
-                            pendingActivities.append(gitAct)
-                            projectPath = "\(projectName) (\(gitActivity.branch))"
-                            break
-                        } else if gitTracker.isGitRepository(path) {
-                            if let status = gitTracker.getGitStatus(at: path) {
-                                projectPath = "\(projectName) (\(status.branch ?? "detached"))"
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Terminal project detection from window title
-            let terminals = [
-                "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
-                "net.kovidgoyal.kitty", "co.zeit.hyper", "com.github.wez.wezterm", "io.alacritty"
-            ]
-            if terminals.contains(bundleId), let title = windowInfo.windowTitle {
-                // Try to extract path from terminal title (often shows current directory)
-                // Common formats: "user@host:~/path" or "~/path" or "/Users/user/path"
-                var extractedPath: String?
-
-                if title.contains("~") {
-                    if let tildeIndex = title.range(of: "~") {
-                        var pathPart = String(title[tildeIndex.lowerBound...])
-                        // Remove trailing parts like " — zsh"
-                        if let dashIndex = pathPart.range(of: " —") ?? pathPart.range(of: " -") {
-                            pathPart = String(pathPart[..<dashIndex.lowerBound])
-                        }
-                        extractedPath = (pathPart as NSString).expandingTildeInPath
-                    }
-                } else if title.contains("/Users/") || title.contains("/home/") {
-                    // Try to find a path in the title
-                    let parts = title.components(separatedBy: " ")
-                    for part in parts {
-                        if part.hasPrefix("/Users/") || part.hasPrefix("/home/") {
-                            extractedPath = part
-                            break
-                        }
-                    }
-                }
-
-                if let path = extractedPath {
-                    // Check for git in this path
-                    if let gitActivity = checkGitActivity(at: path) {
-                        let gitAct = Activity(
-                            type: gitActivity.type,
-                            appBundleId: bundleId,
-                            appName: windowInfo.ownerName,
-                            windowTitle: gitActivity.message,
-                            filePath: nil,
-                            projectPath: gitActivity.repoPath
-                        )
-                        pendingActivities.append(gitAct)
-                        projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(gitActivity.branch))"
-                    } else if gitTracker.isGitRepository(path) {
-                        if let status = gitTracker.getGitStatus(at: path) {
-                            projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(status.branch ?? "detached"))"
-                        }
-                    } else {
-                        projectPath = URL(fileURLWithPath: path).lastPathComponent
-                    }
-                }
-            }
+            // Track based on app category
+            trackBrowserActivity(bundleId: bundleId, context: &context)
+            trackIDEActivity(bundleId: bundleId, windowInfo: windowInfo, context: &context)
+            trackTerminalActivity(bundleId: bundleId, windowInfo: windowInfo, context: &context)
 
             // Fallback to window title parsing for non-IDEs
-            if filePath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
-                filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+            if context.filePath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
+                context.filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
             }
-            if projectPath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
-                projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+            if context.projectPath == nil && !IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
+                context.projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
             }
         }
 
@@ -334,10 +238,131 @@ final class ActivityTrackingService: ObservableObject {
             appBundleId: windowInfo.bundleId,
             appName: windowInfo.ownerName,
             windowTitle: windowInfo.windowTitle,
-            url: url,
-            filePath: filePath,
-            projectPath: projectPath
+            url: context.url,
+            filePath: context.filePath,
+            projectPath: context.projectPath
         )
+    }
+
+    // MARK: - Activity Tracking Helpers
+
+    private func trackBrowserActivity(bundleId: String, context: inout ActivityContext) {
+        guard BrowserTabTracker.supportedBrowsers.keys.contains(bundleId) else { return }
+
+        if let tab = browserTracker.getActiveTab(for: bundleId) {
+            context.url = tab.url
+            lastBrowserURL = tab.url
+        }
+    }
+
+    private func trackIDEActivity(bundleId: String, windowInfo: WindowInfo, context: inout ActivityContext) {
+        guard IDEFileTracker.supportedIDEs.keys.contains(bundleId) else { return }
+
+        // Get context from IDE tracker
+        if let ideContext = ideTracker.getIDEContext(bundleId: bundleId, windowTitle: windowInfo.windowTitle) {
+            context.filePath = ideContext.fileName
+            context.projectPath = ideContext.projectName
+        }
+
+        // Fallback to window title extraction
+        if context.filePath == nil {
+            context.filePath = windowTracker.extractFilePathFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+        }
+        if context.projectPath == nil {
+            context.projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
+        }
+
+        // Try to find git repo and enrich project path
+        if let projectName = context.projectPath {
+            context.projectPath = enrichProjectWithGitInfo(
+                projectName: projectName,
+                bundleId: bundleId,
+                ownerName: windowInfo.ownerName
+            )
+        }
+    }
+
+    private func trackTerminalActivity(bundleId: String, windowInfo: WindowInfo, context: inout ActivityContext) {
+        guard AppIdentifiers.Terminals.all.contains(bundleId),
+              let title = windowInfo.windowTitle else { return }
+
+        // Extract path from terminal title
+        guard let path = extractPathFromTerminalTitle(title) else { return }
+
+        // Check for git and set project path
+        if let gitActivity = checkGitActivity(at: path) {
+            let gitAct = Activity(
+                type: gitActivity.type,
+                appBundleId: bundleId,
+                appName: windowInfo.ownerName,
+                windowTitle: gitActivity.message,
+                filePath: nil,
+                projectPath: gitActivity.repoPath
+            )
+            pendingActivities.append(gitAct)
+            context.projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(gitActivity.branch))"
+        } else if gitTracker.isGitRepository(path) {
+            if let status = gitTracker.getGitStatus(at: path) {
+                context.projectPath = "\(URL(fileURLWithPath: path).lastPathComponent) (\(status.branch ?? "detached"))"
+            }
+        } else {
+            context.projectPath = URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
+    private func extractPathFromTerminalTitle(_ title: String) -> String? {
+        // Common formats: "user@host:~/path" or "~/path" or "/Users/user/path"
+        if title.contains("~") {
+            if let tildeIndex = title.range(of: "~") {
+                var pathPart = String(title[tildeIndex.lowerBound...])
+                // Remove trailing parts like " — zsh"
+                if let dashIndex = pathPart.range(of: " —") ?? pathPart.range(of: " -") {
+                    pathPart = String(pathPart[..<dashIndex.lowerBound])
+                }
+                return (pathPart as NSString).expandingTildeInPath
+            }
+        } else if title.contains("/Users/") || title.contains("/home/") {
+            let parts = title.components(separatedBy: " ")
+            for part in parts {
+                if part.hasPrefix("/Users/") || part.hasPrefix("/home/") {
+                    return part
+                }
+            }
+        }
+        return nil
+    }
+
+    private func enrichProjectWithGitInfo(projectName: String, bundleId: String, ownerName: String) -> String {
+        let home = NSHomeDirectory()
+        let possiblePaths = [
+            "\(home)/\(projectName)",
+            "\(home)/Projects/\(projectName)",
+            "\(home)/Developer/\(projectName)",
+            "\(home)/workspace/\(projectName)",
+            "\(home)/code/\(projectName)",
+            "\(home)/src/\(projectName)"
+        ]
+
+        for path in possiblePaths {
+            if let gitActivity = checkGitActivity(at: path) {
+                let gitAct = Activity(
+                    type: gitActivity.type,
+                    appBundleId: bundleId,
+                    appName: ownerName,
+                    windowTitle: gitActivity.message,
+                    filePath: nil,
+                    projectPath: gitActivity.repoPath
+                )
+                pendingActivities.append(gitAct)
+                return "\(projectName) (\(gitActivity.branch))"
+            } else if gitTracker.isGitRepository(path) {
+                if let status = gitTracker.getGitStatus(at: path) {
+                    return "\(projectName) (\(status.branch ?? "detached"))"
+                }
+            }
+        }
+
+        return projectName
     }
 
     // MARK: - Git Activity Detection

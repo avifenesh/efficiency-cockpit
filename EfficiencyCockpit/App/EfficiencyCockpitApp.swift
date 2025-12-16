@@ -17,7 +17,9 @@ struct EfficiencyCockpitApp: App {
         ])
 
         // Use a fixed location so MCP server can access the data
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Cannot access Application Support directory")
+        }
         let storeDirectory = appSupport.appendingPathComponent("EfficiencyCockpit")
 
         // Create directory if needed

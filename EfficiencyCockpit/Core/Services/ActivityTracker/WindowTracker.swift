@@ -182,12 +182,7 @@ final class WindowTracker {
     // MARK: - Utility
 
     /// VSCode-like IDEs that use "filename — project" format
-    private static let vscodeIDEs = [
-        "com.microsoft.VSCode",
-        "com.microsoft.VSCodeInsiders",
-        "com.todesktop.230313mzl4w4u92", // Cursor
-        "dev.zed.Zed"
-    ]
+    private static let vscodeIDEs = AppIdentifiers.IDEs.vscodeStyle
 
     func extractFilePathFromTitle(_ title: String?, bundleId: String?) -> String? {
         guard let title = title, let bundleId = bundleId else { return nil }
@@ -204,7 +199,7 @@ final class WindowTracker {
         }
 
         // Xcode: "filename.swift — ProjectName"
-        if bundleId == "com.apple.dt.Xcode" {
+        if bundleId == "AppIdentifiers.IDEs.xcode" {
             if let dashIndex = title.range(of: " — ") {
                 let filename = String(title[..<dashIndex.lowerBound])
                 if filename.contains(".") {
@@ -214,7 +209,7 @@ final class WindowTracker {
         }
 
         // JetBrains: "project – filename.ext"
-        if bundleId.hasPrefix("com.jetbrains.") {
+        if bundleId.hasPrefix(AppIdentifiers.IDEs.jetbrainsPrefix) {
             if let dashIndex = title.range(of: " – ") {
                 let afterDash = String(title[dashIndex.upperBound...])
                 if afterDash.contains(".") && !afterDash.contains("[") {
@@ -242,7 +237,7 @@ final class WindowTracker {
         }
 
         // Xcode: "filename.swift — ProjectName"
-        if bundleId == "com.apple.dt.Xcode" {
+        if bundleId == "AppIdentifiers.IDEs.xcode" {
             if let dashIndex = title.range(of: " — ") {
                 let project = String(title[dashIndex.upperBound...])
                 return project.trimmingCharacters(in: .whitespaces)
@@ -250,7 +245,7 @@ final class WindowTracker {
         }
 
         // JetBrains: "project – filename.ext" or "project [path]"
-        if bundleId.hasPrefix("com.jetbrains.") {
+        if bundleId.hasPrefix(AppIdentifiers.IDEs.jetbrainsPrefix) {
             var project = title
             if let dashIndex = title.range(of: " – ") {
                 project = String(title[..<dashIndex.lowerBound])

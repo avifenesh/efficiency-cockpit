@@ -18,6 +18,7 @@ let package = Package(
             sources: [
                 "App/EfficiencyCockpitApp.swift",
                 "App/AppState.swift",
+                "Core/AppIdentifiers.swift",
                 "Core/Models/Activity.swift",
                 "Core/Models/AppSession.swift",
                 "Core/Models/ProductivityInsight.swift",

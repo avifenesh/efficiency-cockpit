@@ -46,6 +46,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    deinit {
+        statsTimer?.invalidate()
+        statsTimer = nil
+    }
+
     func refreshStats() async {
         guard let modelContext = modelContext else {
             print("[Stats] No model context")

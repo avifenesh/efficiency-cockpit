@@ -213,9 +213,15 @@ final class GitActivityTracker {
             if process.terminationStatus == 0 {
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 return String(data: data, encoding: .utf8)
+            } else {
+                // Non-zero exit status - not necessarily an error (e.g., not a git repo)
+                // Only log if it seems like an unexpected failure
+                if process.terminationStatus != 128 { // 128 = not a git repo
+                    print("[Git] Command '\(arguments.joined(separator: " "))' failed with status \(process.terminationStatus) at \(path)")
+                }
             }
         } catch {
-            // Git command failed - path might not be a repo
+            print("[Git] Failed to execute git at \(path): \(error.localizedDescription)")
         }
 
         return nil
