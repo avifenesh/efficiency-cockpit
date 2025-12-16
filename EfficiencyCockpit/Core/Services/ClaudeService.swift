@@ -84,14 +84,14 @@ final class ClaudeService: ObservableObject {
             context += "- \(type.displayName): \(acts.count)\n"
         }
 
-        // Recent activities (last 20)
-        context += "\n=== RECENT ACTIVITIES (last 20) ===\n"
+        // Recent activities (last 10 to keep context manageable)
+        context += "\n=== RECENT ACTIVITIES (last 10) ===\n"
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        for activity in todayActivities.prefix(20) {
+        for activity in todayActivities.prefix(10) {
             let time = formatter.string(from: activity.timestamp)
             let app = activity.appName ?? "Unknown"
-            let title = activity.windowTitle?.prefix(50) ?? ""
+            let title = (activity.windowTitle ?? "").prefix(40)
             context += "[\(time)] \(app): \(title)\n"
         }
 
@@ -121,9 +121,12 @@ final class ClaudeService: ObservableObject {
             // Execute claude directly without shell interpolation
             // Since we use Process.arguments, the prompt is passed safely without shell escaping issues
             process.executableURL = URL(fileURLWithPath: claudePath)
-            process.arguments = ["-p", prompt]
+            process.arguments = ["-p", "--output-format", "text", prompt]
             process.standardOutput = outputPipe
             process.standardError = errorPipe
+
+            // Set working directory to home to avoid trust issues
+            process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
 
             // Set environment for node-based CLI tools
             var env = ProcessInfo.processInfo.environment
@@ -131,7 +134,7 @@ final class ClaudeService: ObservableObject {
             // Add common paths where node/npm binaries might be
             // Note: NVM paths are handled explicitly in findClaudeBinary() since wildcards don't expand here
             let existingPath = env["PATH"] ?? ""
-            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:\(existingPath)"
+            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin:\(existingPath)"
             process.environment = env
 
             currentTask = process
@@ -164,16 +167,22 @@ final class ClaudeService: ObservableObject {
     }
 
     /// Find claude binary in common locations
+    /// Prefers the native Bun binary at ~/.local/bin/claude over npm-installed versions
     private func findClaudeBinary() -> String? {
+        // Check preferred paths first (native binary takes priority)
         let possiblePaths = [
             "\(NSHomeDirectory())/.local/bin/claude",
             "/usr/local/bin/claude",
-            "/opt/homebrew/bin/claude",
-            "\(NSHomeDirectory())/.npm-global/bin/claude",
-            "\(NSHomeDirectory())/node_modules/.bin/claude"
+            "/opt/homebrew/bin/claude"
         ]
 
-        // Also check nvm versions
+        for path in possiblePaths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        // Fallback: check nvm versions (npm-installed, less preferred)
         let nvmBase = "\(NSHomeDirectory())/.nvm/versions/node"
         if let contents = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
             for version in contents {
@@ -181,12 +190,6 @@ final class ClaudeService: ObservableObject {
                 if FileManager.default.isExecutableFile(atPath: path) {
                     return path
                 }
-            }
-        }
-
-        for path in possiblePaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return path
             }
         }
 
