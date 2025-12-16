@@ -117,13 +117,11 @@ final class ClaudeService: ObservableObject {
             let process = Process()
             let outputPipe = Pipe()
             let errorPipe = Pipe()
-            let inputPipe = Pipe()
 
             // Execute claude directly without shell interpolation
+            // Since we use Process.arguments, the prompt is passed safely without shell escaping issues
             process.executableURL = URL(fileURLWithPath: claudePath)
-            // Use --print flag with prompt passed via stdin to avoid any escaping issues
-            process.arguments = ["-p", "-"]
-            process.standardInput = inputPipe
+            process.arguments = ["-p", prompt]
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
@@ -131,8 +129,9 @@ final class ClaudeService: ObservableObject {
             var env = ProcessInfo.processInfo.environment
             env["HOME"] = NSHomeDirectory()
             // Add common paths where node/npm binaries might be
+            // Note: NVM paths are handled explicitly in findClaudeBinary() since wildcards don't expand here
             let existingPath = env["PATH"] ?? ""
-            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:\(NSHomeDirectory())/.nvm/versions/node/*/bin:\(existingPath)"
+            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:\(existingPath)"
             process.environment = env
 
             currentTask = process
@@ -140,17 +139,15 @@ final class ClaudeService: ObservableObject {
             do {
                 try process.run()
 
-                // Write prompt to stdin and close
-                if let promptData = prompt.data(using: .utf8) {
-                    inputPipe.fileHandleForWriting.write(promptData)
-                }
-                inputPipe.fileHandleForWriting.closeFile()
-
                 DispatchQueue.global().async {
                     process.waitUntilExit()
 
                     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+                    // Close file handles to prevent resource leaks
+                    try? outputPipe.fileHandleForReading.close()
+                    try? errorPipe.fileHandleForReading.close()
 
                     if process.terminationStatus == 0 {
                         let output = String(data: outputData, encoding: .utf8) ?? ""

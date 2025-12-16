@@ -19,7 +19,6 @@ struct WindowInfo {
 
 final class WindowTracker {
     private var lastActiveWindow: WindowInfo?
-    private var windowChangeHandler: ((WindowInfo) -> Void)?
 
     // MARK: - Window Information
 
@@ -199,7 +198,7 @@ final class WindowTracker {
         }
 
         // Xcode: "filename.swift — ProjectName"
-        if bundleId == "AppIdentifiers.IDEs.xcode" {
+        if bundleId == AppIdentifiers.IDEs.xcode {
             if let dashIndex = title.range(of: " — ") {
                 let filename = String(title[..<dashIndex.lowerBound])
                 if filename.contains(".") {
@@ -237,7 +236,7 @@ final class WindowTracker {
         }
 
         // Xcode: "filename.swift — ProjectName"
-        if bundleId == "AppIdentifiers.IDEs.xcode" {
+        if bundleId == AppIdentifiers.IDEs.xcode {
             if let dashIndex = title.range(of: " — ") {
                 let project = String(title[dashIndex.upperBound...])
                 return project.trimmingCharacters(in: .whitespaces)

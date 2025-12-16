@@ -431,17 +431,8 @@ final class ActivityTrackingService: ObservableObject {
             return .browserNavigation
         }
 
-        // Terminal detection - expanded list
-        let terminals = [
-            "com.apple.Terminal",
-            "com.googlecode.iterm2",
-            "dev.warp.Warp-Stable",
-            "net.kovidgoyal.kitty",
-            "co.zeit.hyper",
-            "com.github.wez.wezterm",
-            "io.alacritty"
-        ]
-        if terminals.contains(bundleId) {
+        // Terminal detection
+        if AppIdentifiers.Terminals.all.contains(bundleId) {
             // Check if running AI CLI tool (claude, aider, etc.)
             if aiTracker.detectCLITool(from: windowInfo.windowTitle) != nil {
                 return .aiToolUse
