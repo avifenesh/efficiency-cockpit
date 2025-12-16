@@ -38,8 +38,8 @@ final class AppState: ObservableObject {
             await refreshStats()
         }
 
-        // Refresh stats every 10 seconds
-        statsTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // Refresh stats every 30 seconds to reduce resource usage
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshStats()
             }

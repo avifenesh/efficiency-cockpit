@@ -55,11 +55,11 @@ final class ActivityTrackingService: ObservableObject {
             }
         }
 
-        // Separate git polling (every 10 seconds)
+        // Separate git polling (every 30 seconds to reduce resource usage)
         gitPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pollGitRepositories()
-                try? await Task.sleep(for: .seconds(10))
+                try? await Task.sleep(for: .seconds(30))
             }
         }
     }
