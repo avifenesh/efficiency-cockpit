@@ -73,8 +73,8 @@ final class IDEFileTracker {
             projectName = String(title[dashRange.upperBound...]).trimmingCharacters(in: .whitespaces)
 
             // Remove any additional suffixes like "[Extension Development Host]"
-            if let bracketRange = projectName?.range(of: " [") {
-                projectName = String(projectName![..<bracketRange.lowerBound])
+            if let proj = projectName, let bracketRange = proj.range(of: " [") {
+                projectName = String(proj[..<bracketRange.lowerBound])
             }
         } else {
             fileName = title

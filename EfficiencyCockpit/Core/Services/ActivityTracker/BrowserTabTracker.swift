@@ -11,14 +11,15 @@ final class BrowserTabTracker {
         let browserBundleId: String
     }
 
-    // Supported browsers and their bundle IDs
+    // Browser bundle IDs mapped to display names (uses AppIdentifiers as source of truth)
     static let supportedBrowsers: [String: String] = [
-        "com.google.Chrome": "Google Chrome",
-        "com.apple.Safari": "Safari",
-        "company.thebrowser.Browser": "Arc",
-        "org.mozilla.firefox": "Firefox",
-        "com.brave.Browser": "Brave Browser",
-        "com.microsoft.edgemac": "Microsoft Edge"
+        AppIdentifiers.Browsers.chrome: "Google Chrome",
+        AppIdentifiers.Browsers.chromeCanary: "Google Chrome Canary",
+        AppIdentifiers.Browsers.safari: "Safari",
+        AppIdentifiers.Browsers.arc: "Arc",
+        AppIdentifiers.Browsers.firefox: "Firefox",
+        AppIdentifiers.Browsers.brave: "Brave Browser",
+        AppIdentifiers.Browsers.edge: "Microsoft Edge"
     ]
 
     /// Get the active tab from the frontmost browser
@@ -28,13 +29,14 @@ final class BrowserTabTracker {
         }
 
         switch bundleId {
-        case "com.google.Chrome", "com.brave.Browser", "com.microsoft.edgemac":
+        case AppIdentifiers.Browsers.chrome, AppIdentifiers.Browsers.chromeCanary,
+             AppIdentifiers.Browsers.brave, AppIdentifiers.Browsers.edge:
             return getChromiumTab(browserName: browserName, bundleId: bundleId)
-        case "com.apple.Safari":
+        case AppIdentifiers.Browsers.safari:
             return getSafariTab()
-        case "company.thebrowser.Browser":
+        case AppIdentifiers.Browsers.arc:
             return getArcTab()
-        case "org.mozilla.firefox":
+        case AppIdentifiers.Browsers.firefox:
             return getFirefoxTab()
         default:
             return nil
@@ -178,7 +180,8 @@ final class BrowserTabTracker {
 
     /// Extract domain from URL
     func extractDomain(from url: String) -> String? {
-        guard let urlObj = URL(string: url),
+        guard !url.isEmpty,
+              let urlObj = URL(string: url),
               let host = urlObj.host else {
             return nil
         }
@@ -187,6 +190,7 @@ final class BrowserTabTracker {
 
     /// Categorize URL for productivity tracking
     func categorizeURL(_ url: String) -> URLCategory {
+        guard !url.isEmpty else { return .other }
         let lowercased = url.lowercased()
 
         // Development/Documentation

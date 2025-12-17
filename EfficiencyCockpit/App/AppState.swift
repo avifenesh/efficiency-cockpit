@@ -10,17 +10,27 @@ final class AppState: ObservableObject {
 
     let permissionManager = PermissionManager()
     let activityTracker: ActivityTrackingService
+    let claudeService: ClaudeService
+    let contentIndexingService: ContentIndexingService
 
     private var cancellables = Set<AnyCancellable>()
     private var modelContext: ModelContext?
     private var statsTimer: Timer?
+    private var isRefreshingStats: Bool = false
+
+    /// Interval for refreshing statistics (in seconds)
+    private static let statsRefreshInterval: TimeInterval = 30.0
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         self.activityTracker = ActivityTrackingService()
+        self.claudeService = ClaudeService()
+        self.contentIndexingService = ContentIndexingService.shared
 
-        // Configure tracker with model context immediately
+        // Configure services with model context
         activityTracker.configure(modelContext: modelContext)
+        claudeService.configure(modelContext: modelContext)
+        contentIndexingService.configure(modelContext: modelContext)
 
         // Bind tracker state
         activityTracker.$isTracking
@@ -38,8 +48,8 @@ final class AppState: ObservableObject {
             await refreshStats()
         }
 
-        // Refresh stats every 30 seconds to reduce resource usage
-        statsTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        // Refresh stats periodically to reduce resource usage
+        statsTimer = Timer.scheduledTimer(withTimeInterval: Self.statsRefreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshStats()
             }
@@ -52,6 +62,11 @@ final class AppState: ObservableObject {
     }
 
     func refreshStats() async {
+        // Prevent concurrent refreshes
+        guard !isRefreshingStats else { return }
+        isRefreshingStats = true
+        defer { isRefreshingStats = false }
+
         guard let modelContext = modelContext else {
             print("[Stats] No model context")
             return
@@ -77,17 +92,24 @@ final class AppState: ObservableObject {
             var lastApp: String?
             var focusStartTime: Date?
 
+            let focusThreshold: TimeInterval = 5 * 60 // 5 minutes in seconds
+
             for activity in activities {
                 // Count app switches
                 if let appName = activity.appName, appName != lastApp {
                     switches += 1
-                    lastApp = appName
 
-                    // Check if previous focus session ended (switched away)
-                    if focusStartTime != nil {
-                        focusSessions += 1
-                        focusStartTime = nil
+                    // Check if previous focus session qualifies (> 5 minutes in same app)
+                    if let startTime = focusStartTime {
+                        let sessionDuration = activity.timestamp.timeIntervalSince(startTime)
+                        if sessionDuration >= focusThreshold {
+                            focusSessions += 1
+                        }
                     }
+
+                    // Start tracking new focus session
+                    focusStartTime = activity.timestamp
+                    lastApp = appName
                 }
 
                 // Accumulate time
@@ -97,10 +119,14 @@ final class AppState: ObservableObject {
                         appUsage[appName, default: 0] += duration
                     }
                 }
+            }
 
-                // Track focus sessions (time in same app > 5 minutes)
-                if focusStartTime == nil {
-                    focusStartTime = activity.timestamp
+            // Check if the final session qualifies (still in the same app)
+            if let startTime = focusStartTime,
+               let lastActivity = activities.last {
+                let finalDuration = lastActivity.timestamp.timeIntervalSince(startTime) + (lastActivity.duration ?? 0)
+                if finalDuration >= focusThreshold {
+                    focusSessions += 1
                 }
             }
 
@@ -108,7 +134,7 @@ final class AppState: ObservableObject {
             let newStats = DailyStats(
                 totalActiveTime: totalTime,
                 appUsage: appUsage,
-                focusSessionCount: max(focusSessions, activities.isEmpty ? 0 : 1),
+                focusSessionCount: focusSessions,
                 contextSwitchCount: max(switches - 1, 0) // First activity isn't a switch
             )
             print("[Stats] Total time: \(Int(totalTime))s, Switches: \(newStats.contextSwitchCount), Focus: \(newStats.focusSessionCount)")
@@ -135,6 +161,39 @@ final class AppState: ObservableObject {
             startTracking()
         }
     }
+
+    /// Clear all activity data from the database
+    func clearAllData() async throws {
+        guard let modelContext = modelContext else { return }
+
+        // Stop tracking temporarily
+        let wasTracking = isTracking
+        if wasTracking {
+            activityTracker.stopTracking()
+        }
+
+        // Delete all activities
+        try modelContext.delete(model: Activity.self)
+
+        // Delete all insights
+        try modelContext.delete(model: ProductivityInsight.self)
+
+        // Delete all sessions
+        try modelContext.delete(model: AppSession.self)
+
+        // Delete all summaries
+        try modelContext.delete(model: DailySummary.self)
+
+        try modelContext.save()
+
+        // Reset stats
+        todayStats = DailyStats()
+
+        // Restart tracking if it was running
+        if wasTracking {
+            startTracking()
+        }
+    }
 }
 
 struct DailyStats {
@@ -155,7 +214,16 @@ struct DailyStats {
 extension AppState {
     @MainActor
     static var preview: AppState {
-        let schema = Schema([Activity.self, AppSession.self, ProductivityInsight.self, DailySummary.self])
+        let schema = Schema([
+            Activity.self,
+            AppSession.self,
+            ProductivityInsight.self,
+            DailySummary.self,
+            ContextSnapshot.self,
+            Decision.self,
+            AIInteraction.self,
+            ContentIndex.self
+        ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try! ModelContainer(for: schema, configurations: [config])
         return AppState(modelContext: ModelContext(container))

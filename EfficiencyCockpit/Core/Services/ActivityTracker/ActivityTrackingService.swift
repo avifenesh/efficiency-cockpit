@@ -2,6 +2,15 @@ import Foundation
 import SwiftData
 import Combine
 
+/// Service responsible for tracking user activity across applications.
+///
+/// ## Thread Safety
+/// This class is marked `@MainActor`, ensuring all property access and method calls
+/// are serialized on the main thread. Background operations use `Task.detached` and
+/// synchronize back via `MainActor.run` when updating shared state. This guarantees:
+/// - No data races on `pendingActivities`, `lastGitBranch`, `lastGitCommitHash`, etc.
+/// - SwiftData context operations happen on the correct actor
+/// - Published properties update safely for SwiftUI observation
 @MainActor
 final class ActivityTrackingService: ObservableObject {
     @Published private(set) var isTracking: Bool = false
@@ -17,11 +26,49 @@ final class ActivityTrackingService: ObservableObject {
     private var pollingTask: Task<Void, Never>?
     private var modelContext: ModelContext?
 
-    /// Polling interval in seconds (default 5 seconds)
-    var pollingInterval: TimeInterval = 5.0
+    // MARK: - Settings (read from UserDefaults)
 
-    /// Batch size before persisting to database
-    private let batchSize = 5
+    /// Polling interval in seconds
+    var pollingInterval: TimeInterval {
+        let stored = UserDefaults.standard.double(forKey: "pollingInterval")
+        return stored > 0 ? stored : 5.0
+    }
+
+    private var trackBrowserTabs: Bool {
+        UserDefaults.standard.object(forKey: "trackBrowserTabs") as? Bool ?? true
+    }
+
+    private var trackIDEFiles: Bool {
+        UserDefaults.standard.object(forKey: "trackIDEFiles") as? Bool ?? true
+    }
+
+    private var trackTerminalCommands: Bool {
+        UserDefaults.standard.object(forKey: "trackTerminalCommands") as? Bool ?? true
+    }
+
+    private var trackGitActivity: Bool {
+        UserDefaults.standard.object(forKey: "trackGitActivity") as? Bool ?? true
+    }
+
+    private var trackAITools: Bool {
+        UserDefaults.standard.object(forKey: "trackAITools") as? Bool ?? true
+    }
+
+    // MARK: - Constants
+
+    private enum Constants {
+        /// Number of activities to batch before persisting to database
+        static let batchSize = 5
+        /// Maximum pending activities to prevent unbounded memory growth on flush failures
+        static let maxPendingActivities = 100
+        /// Maximum seconds between automatic flushes
+        static let maxTimeBetweenFlushes: TimeInterval = 30.0
+        /// Git polling interval in seconds
+        static let gitPollingInterval: TimeInterval = 30.0
+        /// Maximum directory items to scan when discovering projects
+        static let maxDirectoryItemsToScan = 100
+    }
+
     private var pendingActivities: [Activity] = []
     private var lastFlushTime: Date = Date()
 
@@ -31,16 +78,41 @@ final class ActivityTrackingService: ObservableObject {
     private var lastGitBranch: [String: String] = [:] // repoPath -> branch
     private var lastGitCommitHash: [String: String] = [:] // repoPath -> commit hash
 
+    // Context switch tracking
+    private var lastProjectPath: String?
+    private var projectStartTime: Date?
+
     // Known project directories to monitor for git
     private var knownProjectPaths: Set<String> = []
     private var gitPollingTask: Task<Void, Never>?
+    private var inactivityTask: Task<Void, Never>?
+    private var isConfigured = false
+
+    // Inactivity tracking for auto-snapshot suggestions
+    private var lastActiveTime: Date = Date()
+    private var inactivityNotificationSent = false
+    private var inactivityThresholdMinutes: Int {
+        UserDefaults.standard.object(forKey: "inactivityThresholdMinutes") as? Int ?? 15
+    }
+    private var autoSnapshotSuggestionEnabled: Bool {
+        UserDefaults.standard.object(forKey: "autoSnapshotSuggestionEnabled") as? Bool ?? true
+    }
 
     // MARK: - Lifecycle
 
+    /// Configure the tracking service with a model context.
+    /// This method should only be called once - subsequent calls are ignored to prevent reconfiguration.
     func configure(modelContext: ModelContext) {
+        guard !isConfigured else {
+            print("[Activity] Already configured, ignoring duplicate configure call")
+            return
+        }
         self.modelContext = modelContext
-        // Discover project directories
-        discoverProjectDirectories()
+        isConfigured = true
+        // Discover project directories in background (don't block configure)
+        Task.detached(priority: .background) { [weak self] in
+            await self?.discoverProjectDirectories()
+        }
     }
 
     func startTracking() async {
@@ -55,17 +127,43 @@ final class ActivityTrackingService: ObservableObject {
             }
         }
 
-        // Separate git polling (every 30 seconds to reduce resource usage)
+        // Separate git polling to reduce resource usage
         gitPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pollGitRepositories()
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(Constants.gitPollingInterval))
+            }
+        }
+
+        // Inactivity detection for auto-snapshot suggestions
+        inactivityTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkInactivity()
+                try? await Task.sleep(for: .seconds(60)) // Check every minute
             }
         }
     }
 
-    /// Discover common project directories
-    private func discoverProjectDirectories() {
+    /// Check for user inactivity and suggest snapshot capture
+    private func checkInactivity() async {
+        guard autoSnapshotSuggestionEnabled,
+              let lastProject = lastProjectPath,
+              !inactivityNotificationSent else {
+            return
+        }
+
+        let inactiveSeconds = Date().timeIntervalSince(lastActiveTime)
+        let thresholdSeconds = TimeInterval(inactivityThresholdMinutes * 60)
+
+        if inactiveSeconds >= thresholdSeconds {
+            let projectName = URL(fileURLWithPath: lastProject).lastPathComponent
+            NotificationService.shared.sendInactivitySnapshotSuggestion(projectName: projectName)
+            inactivityNotificationSent = true
+        }
+    }
+
+    /// Discover common project directories (runs in background, file operations off main thread)
+    nonisolated private func discoverProjectDirectories() async {
         let home = NSHomeDirectory()
         let commonPaths = [
             home,
@@ -79,34 +177,41 @@ final class ActivityTrackingService: ObservableObject {
         ]
 
         let fileManager = FileManager.default
+        let gitTracker = GitActivityTracker() // Create local instance to avoid actor isolation
+        var discoveredPaths: Set<String> = []
 
         for basePath in commonPaths {
             guard fileManager.fileExists(atPath: basePath) else { continue }
 
             // Check if basePath itself is a git repo
             if gitTracker.isGitRepository(basePath) {
-                knownProjectPaths.insert(basePath)
+                discoveredPaths.insert(basePath)
             }
 
-            // Check immediate subdirectories
+            // Check immediate subdirectories (limit depth to avoid slow scans)
             if let contents = try? fileManager.contentsOfDirectory(atPath: basePath) {
-                for item in contents { // Check all directories
+                for item in contents.prefix(Constants.maxDirectoryItemsToScan) {
                     let fullPath = "\(basePath)/\(item)"
                     var isDir: ObjCBool = false
                     if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue {
                         if gitTracker.isGitRepository(fullPath) {
-                            knownProjectPaths.insert(fullPath)
+                            discoveredPaths.insert(fullPath)
                         }
                     }
                 }
             }
         }
 
-        print("[Git] Discovered \(knownProjectPaths.count) git repositories")
+        // Update on main actor
+        await MainActor.run { [discoveredPaths] in
+            self.knownProjectPaths = discoveredPaths
+            print("[Git] Discovered \(discoveredPaths.count) git repositories")
+        }
     }
 
     /// Poll known git repositories for changes
     private func pollGitRepositories() async {
+        guard trackGitActivity else { return }
         for repoPath in knownProjectPaths {
             if let gitActivity = checkGitActivity(at: repoPath) {
                 let activity = Activity(
@@ -128,6 +233,8 @@ final class ActivityTrackingService: ObservableObject {
         pollingTask = nil
         gitPollingTask?.cancel()
         gitPollingTask = nil
+        inactivityTask?.cancel()
+        inactivityTask = nil
         isTracking = false
 
         // Flush any pending activities
@@ -137,6 +244,7 @@ final class ActivityTrackingService: ObservableObject {
     deinit {
         pollingTask?.cancel()
         gitPollingTask?.cancel()
+        inactivityTask?.cancel()
     }
 
     // MARK: - Activity Capture
@@ -145,6 +253,10 @@ final class ActivityTrackingService: ObservableObject {
         guard let windowInfo = windowTracker.getActiveWindow() else {
             return
         }
+
+        // Reset inactivity tracking on any window detection
+        lastActiveTime = Date()
+        inactivityNotificationSent = false
 
         // Check if activity changed
         guard hasActivityChanged(windowInfo) else {
@@ -160,13 +272,17 @@ final class ActivityTrackingService: ObservableObject {
         lastWindowInfo = windowInfo
         lastActivityTime = Date()
 
+        // Check for context switch (project change)
+        checkForContextSwitch(newProjectPath: activity.projectPath)
+
         // Queue for persistence
         pendingActivities.append(activity)
 
-        // Flush immediately for first few activities, then batch
-        // Also flush every 30 seconds to ensure data is saved
+        // Flush when batch is ready or time threshold passed
+        // With 5-second polling and batchSize=5, flushes every ~25 seconds during active use
+        // Time threshold ensures flush even during low activity periods
         let timeSinceFlush = Date().timeIntervalSince(lastFlushTime)
-        if pendingActivities.count <= 3 || pendingActivities.count >= batchSize || timeSinceFlush > 30 {
+        if pendingActivities.count >= Constants.batchSize || timeSinceFlush > Constants.maxTimeBetweenFlushes {
             flushPendingActivities()
             lastFlushTime = Date()
         }
@@ -197,12 +313,62 @@ final class ActivityTrackingService: ObservableObject {
     }
 
     private func updatePreviousActivityDuration() {
-        guard let lastTime = lastActivityTime,
-              let lastActivity = pendingActivities.last ?? currentActivity else {
+        guard let lastTime = lastActivityTime else { return }
+
+        // Capture the last activity once to avoid race conditions
+        // (pendingActivities could be modified by flushPendingActivities between checks)
+        let lastPendingActivity = pendingActivities.last
+        let activityToUpdate = lastPendingActivity ?? currentActivity
+        guard let activity = activityToUpdate else { return }
+
+        activity.duration = Date().timeIntervalSince(lastTime)
+
+        // Only try to save if the activity wasn't in pending list
+        // (meaning it was already persisted)
+        if lastPendingActivity == nil, let context = modelContext {
+            do {
+                try context.save()
+            } catch {
+                print("[Activity] Failed to update activity duration: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Context Switch Detection
+
+    private func checkForContextSwitch(newProjectPath: String?) {
+        // Skip if no project path (not working in a project)
+        guard let newPath = newProjectPath, !newPath.isEmpty else {
+            // If moving away from a project, reset tracking
+            if lastProjectPath != nil {
+                lastProjectPath = nil
+                projectStartTime = nil
+            }
             return
         }
 
-        lastActivity.duration = Date().timeIntervalSince(lastTime)
+        // If same project, no switch
+        if lastProjectPath == newPath {
+            return
+        }
+
+        // Check if we should send a nudge for leaving the previous project
+        if let previousProject = lastProjectPath, let startTime = projectStartTime {
+            let settings = NotificationService.shared.settings
+            let thresholdSeconds = TimeInterval(settings.contextSwitchThresholdMinutes * 60)
+            let timeInProject = Date().timeIntervalSince(startTime)
+
+            // Only nudge if spent significant time in previous project
+            if timeInProject >= thresholdSeconds {
+                let previousName = URL(fileURLWithPath: previousProject).lastPathComponent
+                let newName = URL(fileURLWithPath: newPath).lastPathComponent
+                NotificationService.shared.sendContextSwitchNudge(fromProject: previousName, toProject: newName)
+            }
+        }
+
+        // Update tracking for new project
+        lastProjectPath = newPath
+        projectStartTime = Date()
     }
 
     // MARK: - Enhanced Activity Creation
@@ -215,11 +381,10 @@ final class ActivityTrackingService: ObservableObject {
     }
 
     private func createEnhancedActivity(from windowInfo: WindowInfo) async -> Activity {
-        let activityType = determineActivityType(from: windowInfo)
         var context = ActivityContext()
 
         if let bundleId = windowInfo.bundleId {
-            // Track based on app category
+            // Track browser URL first (needed for activity type determination)
             trackBrowserActivity(bundleId: bundleId, context: &context)
             trackIDEActivity(bundleId: bundleId, windowInfo: windowInfo, context: &context)
             trackTerminalActivity(bundleId: bundleId, windowInfo: windowInfo, context: &context)
@@ -232,6 +397,9 @@ final class ActivityTrackingService: ObservableObject {
                 context.projectPath = windowTracker.extractProjectFromTitle(windowInfo.windowTitle, bundleId: bundleId)
             }
         }
+
+        // Determine activity type after browser URL is fetched (lastBrowserURL is now current)
+        let activityType = determineActivityType(from: windowInfo)
 
         return Activity(
             type: activityType,
@@ -247,7 +415,13 @@ final class ActivityTrackingService: ObservableObject {
     // MARK: - Activity Tracking Helpers
 
     private func trackBrowserActivity(bundleId: String, context: inout ActivityContext) {
-        guard BrowserTabTracker.supportedBrowsers.keys.contains(bundleId) else { return }
+        // Clear stale URL when not on a browser
+        guard BrowserTabTracker.supportedBrowsers.keys.contains(bundleId) else {
+            lastBrowserURL = nil
+            return
+        }
+
+        guard trackBrowserTabs else { return }
 
         if let tab = browserTracker.getActiveTab(for: bundleId) {
             context.url = tab.url
@@ -256,7 +430,8 @@ final class ActivityTrackingService: ObservableObject {
     }
 
     private func trackIDEActivity(bundleId: String, windowInfo: WindowInfo, context: inout ActivityContext) {
-        guard IDEFileTracker.supportedIDEs.keys.contains(bundleId) else { return }
+        guard trackIDEFiles,
+              IDEFileTracker.supportedIDEs.keys.contains(bundleId) else { return }
 
         // Get context from IDE tracker
         if let ideContext = ideTracker.getIDEContext(bundleId: bundleId, windowTitle: windowInfo.windowTitle) {
@@ -283,7 +458,8 @@ final class ActivityTrackingService: ObservableObject {
     }
 
     private func trackTerminalActivity(bundleId: String, windowInfo: WindowInfo, context: inout ActivityContext) {
-        guard AppIdentifiers.Terminals.all.contains(bundleId),
+        guard trackTerminalCommands,
+              AppIdentifiers.Terminals.all.contains(bundleId),
               let title = windowInfo.windowTitle else { return }
 
         // Extract path from terminal title
@@ -374,6 +550,11 @@ final class ActivityTrackingService: ObservableObject {
         let message: String
     }
 
+    /// Checks for git activity (branch switch or commit) at the given path.
+    /// Uses lastGitBranch/lastGitCommitHash to deduplicate - only returns an activity
+    /// when there's an actual change, preventing duplicate activities when multiple
+    /// callers (pollGitRepositories, trackTerminalActivity, enrichProjectWithGitInfo)
+    /// check the same repo in the same or subsequent cycles.
     private func checkGitActivity(at path: String) -> GitActivityInfo? {
         guard let repoPath = gitTracker.findGitDirectory(from: path) else {
             return nil
@@ -419,13 +600,13 @@ final class ActivityTrackingService: ObservableObject {
         let isWindowChange = isWindowFocusChange(windowInfo)
 
         // Dedicated AI tool apps (Claude desktop, ChatGPT app, etc.)
-        if aiTracker.detectAITool(bundleId: bundleId) != nil {
+        if trackAITools, aiTracker.detectAITool(bundleId: bundleId) != nil {
             return .aiToolUse
         }
 
         // Check for AI in browser
         if BrowserTabTracker.supportedBrowsers.keys.contains(bundleId) {
-            if let url = lastBrowserURL, aiTracker.detectAIToolFromURL(url) != nil {
+            if trackAITools, let url = lastBrowserURL, aiTracker.detectAIToolFromURL(url) != nil {
                 return .aiToolUse
             }
             return .browserNavigation
@@ -434,7 +615,7 @@ final class ActivityTrackingService: ObservableObject {
         // Terminal detection
         if AppIdentifiers.Terminals.all.contains(bundleId) {
             // Check if running AI CLI tool (claude, aider, etc.)
-            if aiTracker.detectCLITool(from: windowInfo.windowTitle) != nil {
+            if trackAITools, aiTracker.detectCLITool(from: windowInfo.windowTitle) != nil {
                 return .aiToolUse
             }
             return .terminalCommand
@@ -443,7 +624,7 @@ final class ActivityTrackingService: ObservableObject {
         // IDE detection - check for AI usage in IDE first
         if IDEFileTracker.supportedIDEs.keys.contains(bundleId) {
             // Check if using AI features in IDE (Cursor AI, Copilot chat, etc.)
-            if let title = windowInfo.windowTitle?.lowercased() {
+            if trackAITools, let title = windowInfo.windowTitle?.lowercased() {
                 if title.contains("composer") || title.contains("chat") ||
                    title.contains("copilot") || title.contains("ai") {
                     return .aiToolUse
@@ -480,7 +661,13 @@ final class ActivityTrackingService: ObservableObject {
             try context.save()
             pendingActivities.removeAll()
         } catch {
-            print("Failed to save activities: \(error)")
+            print("[Activity] Failed to save activities: \(error)")
+            // Prevent unbounded memory growth on repeated flush failures
+            if pendingActivities.count > Constants.maxPendingActivities {
+                let dropCount = pendingActivities.count - Constants.maxPendingActivities
+                pendingActivities.removeFirst(dropCount)
+                print("[Activity] Dropped \(dropCount) oldest activities due to memory limit")
+            }
         }
     }
 

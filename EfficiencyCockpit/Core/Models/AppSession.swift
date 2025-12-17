@@ -40,5 +40,3 @@ final class AppSession {
         }
     }
 }
-
-// Note: The session relationship is defined in Activity.swift

@@ -5,8 +5,13 @@ struct AskClaudeView: View {
     @StateObject private var claudeService = ClaudeService()
     @Query(sort: \Activity.timestamp, order: .reverse)
     private var activities: [Activity]
+    @Query(sort: \ContextSnapshot.timestamp, order: .reverse)
+    private var snapshots: [ContextSnapshot]
+    @Query(sort: \Decision.timestamp, order: .reverse)
+    private var decisions: [Decision]
     @State private var question = ""
     @State private var conversationHistory: [ConversationMessage] = []
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +52,11 @@ struct AskClaudeView: View {
 
             Divider()
 
+            // Quick action bar
+            quickActionBar
+
+            Divider()
+
             // Input area
             HStack(spacing: 12) {
                 TextField("Ask about your productivity...", text: $question)
@@ -54,10 +64,14 @@ struct AskClaudeView: View {
                     .padding(10)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(8)
+                    .focused($isInputFocused)
                     .onSubmit {
                         sendQuestion()
                     }
                     .disabled(claudeService.isLoading)
+                    .onAppear {
+                        isInputFocused = true
+                    }
 
                 Button(action: sendQuestion) {
                     Image(systemName: claudeService.isLoading ? "stop.fill" : "arrow.up.circle.fill")
@@ -70,6 +84,45 @@ struct AskClaudeView: View {
             .padding()
         }
         .navigationTitle("Ask Claude")
+    }
+
+    private var quickActionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(QuickAction.allCases, id: \.self) { action in
+                    QuickActionButton(action: action, isLoading: claudeService.isLoading) {
+                        executeQuickAction(action)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func executeQuickAction(_ action: QuickAction) {
+        guard !claudeService.isLoading else { return }
+
+        // Add user message showing the action
+        let userMessage = ConversationMessage(role: .user, content: "[\(action.displayName)] \(action.description)")
+        conversationHistory.append(userMessage)
+
+        Task {
+            let response = await claudeService.executeQuickAction(
+                action,
+                activities: activities,
+                snapshots: snapshots,
+                decisions: decisions
+            )
+            let assistantMessage = ConversationMessage(role: .assistant, content: response)
+            conversationHistory.append(assistantMessage)
+
+            // For prompt pack, copy to clipboard
+            if action == .promptPack {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(response, forType: .string)
+            }
+        }
     }
 
     private var emptyStateView: some View {
@@ -129,6 +182,7 @@ struct AskClaudeView: View {
             let response = await claudeService.ask(currentQuestion, activities: activities)
             let assistantMessage = ConversationMessage(role: .assistant, content: response)
             conversationHistory.append(assistantMessage)
+            isInputFocused = true
         }
     }
 }
@@ -195,6 +249,31 @@ struct SuggestionButton: View {
             .cornerRadius(8)
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct QuickActionButton: View {
+    let action: QuickAction
+    let isLoading: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Image(systemName: action.icon)
+                Text(action.displayName)
+            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.accentColor.opacity(0.15))
+            .foregroundColor(.accentColor)
+            .cornerRadius(16)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .opacity(isLoading ? 0.5 : 1.0)
+        .help(action.description)
     }
 }
 

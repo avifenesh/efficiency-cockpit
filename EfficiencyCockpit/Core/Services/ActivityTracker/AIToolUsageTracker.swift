@@ -4,21 +4,6 @@ import AppKit
 /// Tracks usage of AI coding assistants and tools
 final class AIToolUsageTracker {
 
-    struct AIToolSession {
-        let toolName: String
-        let toolType: AIToolType
-        let bundleId: String?
-        let startTime: Date
-        var duration: TimeInterval
-        let context: AIToolContext?
-    }
-
-    struct AIToolContext {
-        let conversationTopic: String?
-        let codeLanguage: String?
-        let projectName: String?
-    }
-
     enum AIToolType: String, Codable, CaseIterable {
         case chatAssistant      // ChatGPT, Claude desktop
         case codeAssistant      // Copilot, Cursor AI
@@ -77,8 +62,6 @@ final class AIToolUsageTracker {
         ("gpt", "GPT CLI")
     ]
 
-    private var activeSessions: [String: AIToolSession] = [:]
-
     // MARK: - Detection
 
     /// Detect AI tool from app bundle ID
@@ -107,161 +90,5 @@ final class AIToolUsageTracker {
             }
         }
         return nil
-    }
-
-    // MARK: - Session Management
-
-    /// Start tracking an AI tool session
-    func startSession(
-        toolName: String,
-        toolType: AIToolType,
-        bundleId: String?,
-        context: AIToolContext? = nil
-    ) -> String {
-        let sessionId = UUID().uuidString
-        let session = AIToolSession(
-            toolName: toolName,
-            toolType: toolType,
-            bundleId: bundleId,
-            startTime: Date(),
-            duration: 0,
-            context: context
-        )
-        activeSessions[sessionId] = session
-        return sessionId
-    }
-
-    /// End an AI tool session
-    func endSession(_ sessionId: String) -> AIToolSession? {
-        guard var session = activeSessions.removeValue(forKey: sessionId) else {
-            return nil
-        }
-        session.duration = Date().timeIntervalSince(session.startTime)
-        return session
-    }
-
-    /// Update session duration
-    func updateSession(_ sessionId: String) {
-        guard var session = activeSessions[sessionId] else { return }
-        session.duration = Date().timeIntervalSince(session.startTime)
-        activeSessions[sessionId] = session
-    }
-
-    /// Get active session for a tool
-    func getActiveSession(for bundleId: String) -> (id: String, session: AIToolSession)? {
-        for (id, session) in activeSessions {
-            if session.bundleId == bundleId {
-                return (id, session)
-            }
-        }
-        return nil
-    }
-
-    // MARK: - Analysis
-
-    /// Check if current activity is AI-assisted coding
-    func isAIAssistedCoding(bundleId: String?, windowTitle: String?, url: String?) -> Bool {
-        // Check desktop app
-        if let bid = bundleId, detectAITool(bundleId: bid) != nil {
-            return true
-        }
-
-        // Check browser URL
-        if let url = url, detectAIToolFromURL(url) != nil {
-            return true
-        }
-
-        // Check terminal for CLI tools
-        if let bid = bundleId,
-           Self.aiToolsByBundleId[bid]?.type == .cliTool,
-           detectCLITool(from: windowTitle) != nil {
-            return true
-        }
-
-        return false
-    }
-
-    /// Get all currently active AI tool sessions
-    func getActiveSessions() -> [AIToolSession] {
-        return Array(activeSessions.values)
-    }
-
-    /// Get total AI tool usage time today
-    func getTotalAIUsageToday() -> TimeInterval {
-        // This would typically query the database
-        // For now, return sum of active sessions
-        return activeSessions.values.reduce(0) { total, session in
-            total + Date().timeIntervalSince(session.startTime)
-        }
-    }
-
-    // MARK: - Context Extraction
-
-    /// Try to extract context from window title
-    func extractContext(from windowTitle: String?, bundleId: String?) -> AIToolContext? {
-        guard let title = windowTitle else { return nil }
-
-        var topic: String?
-        var language: String?
-
-        // Claude desktop shows conversation title
-        if bundleId == "com.anthropic.claudefordesktop" {
-            topic = title
-        }
-
-        // ChatGPT shows "ChatGPT - Topic"
-        if bundleId == "com.openai.chat" {
-            if let dashIndex = title.range(of: " - ") {
-                topic = String(title[dashIndex.upperBound...])
-            }
-        }
-
-        // Try to detect programming language mentions
-        let languages = ["Swift", "Python", "JavaScript", "TypeScript", "Rust", "Go", "Java", "Ruby", "C++", "C#"]
-        for lang in languages {
-            if title.lowercased().contains(lang.lowercased()) {
-                language = lang
-                break
-            }
-        }
-
-        if topic != nil || language != nil {
-            return AIToolContext(
-                conversationTopic: topic,
-                codeLanguage: language,
-                projectName: nil
-            )
-        }
-
-        return nil
-    }
-}
-
-// MARK: - AI Tool Statistics
-
-extension AIToolUsageTracker {
-
-    struct AIToolStats {
-        let toolName: String
-        let totalSessions: Int
-        let totalDuration: TimeInterval
-        let averageSessionDuration: TimeInterval
-        let lastUsed: Date?
-    }
-
-    /// Calculate stats for a specific AI tool
-    func calculateStats(for toolName: String, sessions: [AIToolSession]) -> AIToolStats {
-        let toolSessions = sessions.filter { $0.toolName == toolName }
-        let totalDuration = toolSessions.reduce(0) { $0 + $1.duration }
-        let avgDuration = toolSessions.isEmpty ? 0 : totalDuration / Double(toolSessions.count)
-        let lastUsed = toolSessions.max(by: { $0.startTime < $1.startTime })?.startTime
-
-        return AIToolStats(
-            toolName: toolName,
-            totalSessions: toolSessions.count,
-            totalDuration: totalDuration,
-            averageSessionDuration: avgDuration,
-            lastUsed: lastUsed
-        )
     }
 }

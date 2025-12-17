@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     private enum Tabs: Hashable {
-        case general, permissions, tracking, mcp, about
+        case general, permissions, tracking, notifications, mcp, about
     }
 
     var body: some View {
@@ -25,6 +25,12 @@ struct SettingsView: View {
                 }
                 .tag(Tabs.tracking)
 
+            NotificationSettingsView()
+                .tabItem {
+                    Label("Notifications", systemImage: "bell")
+                }
+                .tag(Tabs.notifications)
+
             MCPSettingsView()
                 .tabItem {
                     Label("MCP", systemImage: "server.rack")
@@ -37,7 +43,7 @@ struct SettingsView: View {
                 }
                 .tag(Tabs.about)
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 450)
     }
 }
 
@@ -260,6 +266,7 @@ struct StatusBadge: View {
 // MARK: - Tracking Settings
 
 struct TrackingSettingsView: View {
+    @EnvironmentObject var appState: AppState
     @AppStorage("pollingInterval") private var pollingInterval: Double = 5.0
     @AppStorage("trackBrowserTabs") private var trackBrowserTabs = true
     @AppStorage("trackIDEFiles") private var trackIDEFiles = true
@@ -267,6 +274,9 @@ struct TrackingSettingsView: View {
     @AppStorage("trackGitActivity") private var trackGitActivity = true
     @AppStorage("trackAITools") private var trackAITools = true
     @AppStorage("dataRetentionDays") private var dataRetentionDays: Int = 30
+    @State private var showingClearConfirmation = false
+    @State private var showingClearError = false
+    @State private var clearErrorMessage = ""
 
     var body: some View {
         Form {
@@ -307,7 +317,31 @@ struct TrackingSettingsView: View {
                 .pickerStyle(.menu)
 
                 Button("Clear All Data", role: .destructive) {
-                    // TODO: Implement data clearing
+                    showingClearConfirmation = true
+                }
+                .confirmationDialog(
+                    "Clear All Data?",
+                    isPresented: $showingClearConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete All Activity Data", role: .destructive) {
+                        Task {
+                            do {
+                                try await appState.clearAllData()
+                            } catch {
+                                clearErrorMessage = error.localizedDescription
+                                showingClearError = true
+                            }
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This will permanently delete all your activity history, insights, and statistics. This cannot be undone.")
+                }
+                .alert("Failed to Clear Data", isPresented: $showingClearError) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(clearErrorMessage)
                 }
             } header: {
                 Text("Data Retention")
@@ -394,6 +428,119 @@ struct MCPSettingsView: View {
     }
 }
 
+// MARK: - Notification Settings
+
+struct NotificationSettingsView: View {
+    @StateObject private var notificationService = NotificationService.shared
+
+    var body: some View {
+        Form {
+            Section {
+                if notificationService.isAuthorized {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Notifications Enabled")
+                    }
+                } else {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("Notifications Not Enabled")
+                    }
+
+                    Button("Enable Notifications") {
+                        Task {
+                            await notificationService.requestPermission()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } header: {
+                Text("Permission")
+            }
+
+            Section {
+                Toggle("Morning Digest", isOn: $notificationService.settings.morningDigestEnabled)
+
+                if notificationService.settings.morningDigestEnabled {
+                    DatePicker(
+                        "Time",
+                        selection: $notificationService.settings.morningDigestTime,
+                        displayedComponents: .hourAndMinute
+                    )
+                }
+            } header: {
+                Text("Morning Digest")
+            } footer: {
+                Text("Get a summary of yesterday's work to start your day.")
+            }
+
+            Section {
+                Toggle("End of Day Digest", isOn: $notificationService.settings.endOfDayDigestEnabled)
+
+                if notificationService.settings.endOfDayDigestEnabled {
+                    DatePicker(
+                        "Time",
+                        selection: $notificationService.settings.endOfDayDigestTime,
+                        displayedComponents: .hourAndMinute
+                    )
+                }
+            } header: {
+                Text("End of Day Digest")
+            } footer: {
+                Text("Get reminded to capture context before wrapping up.")
+            }
+
+            Section {
+                Toggle("Context Switch Nudges", isOn: $notificationService.settings.contextSwitchNudgesEnabled)
+
+                if notificationService.settings.contextSwitchNudgesEnabled {
+                    Stepper(
+                        "After \(notificationService.settings.contextSwitchThresholdMinutes) minutes",
+                        value: $notificationService.settings.contextSwitchThresholdMinutes,
+                        in: 1...30
+                    )
+                }
+            } header: {
+                Text("Context Switches")
+            } footer: {
+                Text("Get nudged to capture a snapshot when switching projects.")
+            }
+
+            Section {
+                Button("Test Notification") {
+                    notificationService.sendNotification(
+                        title: "Test Notification",
+                        body: "Efficiency Cockpit notifications are working!"
+                    )
+                }
+                .disabled(!notificationService.isAuthorized)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onChange(of: notificationService.settings.morningDigestEnabled) { _, _ in
+            notificationService.saveSettings()
+        }
+        .onChange(of: notificationService.settings.endOfDayDigestEnabled) { _, _ in
+            notificationService.saveSettings()
+        }
+        .onChange(of: notificationService.settings.contextSwitchNudgesEnabled) { _, _ in
+            notificationService.saveSettings()
+        }
+        .onChange(of: notificationService.settings.morningDigestHour) { _, _ in
+            notificationService.saveSettings()
+        }
+        .onChange(of: notificationService.settings.endOfDayDigestHour) { _, _ in
+            notificationService.saveSettings()
+        }
+        .onChange(of: notificationService.settings.contextSwitchThresholdMinutes) { _, _ in
+            notificationService.saveSettings()
+        }
+    }
+}
+
 // MARK: - About Settings
 
 struct AboutSettingsView: View {
@@ -407,7 +554,7 @@ struct AboutSettingsView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Version 1.0.0")
+            Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")")
                 .foregroundColor(.secondary)
 
             Text("Passive productivity tracking for developers")
@@ -417,9 +564,13 @@ struct AboutSettingsView: View {
             Spacer()
 
             VStack(spacing: 8) {
-                Link("View on GitHub", destination: URL(string: "https://github.com/avifenesh/efficiency-cockpit")!)
+                if let url = URL(string: "https://github.com/avifenesh/efficiency-cockpit") {
+                    Link("View on GitHub", destination: url)
+                }
 
-                Link("Report an Issue", destination: URL(string: "https://github.com/avifenesh/efficiency-cockpit/issues")!)
+                if let url = URL(string: "https://github.com/avifenesh/efficiency-cockpit/issues") {
+                    Link("Report an Issue", destination: url)
+                }
             }
 
             Spacer()

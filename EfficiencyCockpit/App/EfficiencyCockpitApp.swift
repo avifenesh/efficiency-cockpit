@@ -13,7 +13,11 @@ struct EfficiencyCockpitApp: App {
             Activity.self,
             AppSession.self,
             ProductivityInsight.self,
-            DailySummary.self
+            DailySummary.self,
+            ContextSnapshot.self,
+            Decision.self,
+            AIInteraction.self,
+            ContentIndex.self
         ])
 
         // Use a fixed location so MCP server can access the data

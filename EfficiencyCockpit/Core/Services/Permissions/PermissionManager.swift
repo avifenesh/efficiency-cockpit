@@ -60,12 +60,23 @@ final class PermissionManager: ObservableObject {
             return
         }
 
-        // Find a window from another app and check if we can see its name
         let ourPID = ProcessInfo.processInfo.processIdentifier
+
+        // Apps that reliably have window names when Screen Recording is enabled
+        let reliableApps: Set<String> = ["Finder", "Dock", "SystemUIServer", "Window Server"]
+        var foundReliableApp = false
+
         for window in windowList {
             guard let windowPID = window[kCGWindowOwnerPID as String] as? pid_t,
                   windowPID != ourPID else {
                 continue
+            }
+
+            let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
+
+            // Check if this is a reliable app
+            if reliableApps.contains(ownerName) {
+                foundReliableApp = true
             }
 
             // If we can see a window name from another process, permission is granted
@@ -75,8 +86,9 @@ final class PermissionManager: ObservableObject {
             }
         }
 
-        // If we couldn't find any window names from other apps, permission is likely denied
-        screenRecordingStatus = .denied
+        // If we found reliable apps but couldn't see any window names, permission is denied
+        // If we didn't find reliable apps, it's unknown (unusual system state)
+        screenRecordingStatus = foundReliableApp ? .denied : .unknown
     }
 
     // MARK: - Automation (AppleScript)
@@ -168,15 +180,6 @@ enum PermissionStatus: String {
         case .granted: return "Granted"
         case .denied: return "Denied"
         case .restricted: return "Restricted"
-        }
-    }
-
-    var color: String {
-        switch self {
-        case .granted: return "green"
-        case .denied: return "red"
-        case .restricted: return "orange"
-        case .unknown: return "gray"
         }
     }
 }

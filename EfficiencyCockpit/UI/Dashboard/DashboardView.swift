@@ -5,7 +5,7 @@ import Charts
 struct DashboardView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
-    @State private var selectedTab: DashboardTab = .activity
+    @State private var selectedTab: DashboardTab = .resume
 
     var body: some View {
         NavigationSplitView {
@@ -18,26 +18,36 @@ struct DashboardView: View {
 
     private var sidebarContent: some View {
         List(selection: $selectedTab) {
-            Section("Today") {
-                Label("Activity Feed", systemImage: "list.bullet")
-                    .tag(DashboardTab.activity)
+            Section("Actions") {
+                Label("Resume", systemImage: "arrow.counterclockwise.circle")
+                    .tag(DashboardTab.resume)
 
-                Label("Time Tracking", systemImage: "clock")
-                    .tag(DashboardTab.timeTracking)
+                Label("Search", systemImage: "magnifyingglass")
+                    .tag(DashboardTab.search)
+
+                Label("Digest", systemImage: "doc.text.magnifyingglass")
+                    .tag(DashboardTab.digest)
             }
 
             Section("AI") {
                 Label("Ask Claude", systemImage: "bubble.left.and.bubble.right")
                     .tag(DashboardTab.askClaude)
+
+                Label("Decide", systemImage: "scale.3d")
+                    .tag(DashboardTab.decide)
             }
 
             Section("Analytics") {
+                Label("Activity Feed", systemImage: "list.bullet")
+                    .tag(DashboardTab.activity)
+
+                Label("Time Tracking", systemImage: "clock")
+                    .tag(DashboardTab.timeTracking)
+
                 Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                     .tag(DashboardTab.trends)
-            }
 
-            Section("Projects") {
-                Label("All Projects", systemImage: "folder")
+                Label("Projects", systemImage: "folder")
                     .tag(DashboardTab.projects)
             }
         }
@@ -48,12 +58,20 @@ struct DashboardView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selectedTab {
+        case .resume:
+            ResumeView()
+        case .search:
+            SearchView()
+        case .digest:
+            DigestView()
+        case .askClaude:
+            AskClaudeView()
+        case .decide:
+            DecideView()
         case .activity:
             ActivityFeedView()
         case .timeTracking:
             TimeTrackingView()
-        case .askClaude:
-            AskClaudeView()
         case .trends:
             TrendsView()
         case .projects:
@@ -62,12 +80,49 @@ struct DashboardView: View {
     }
 }
 
-enum DashboardTab: Hashable {
+enum DashboardTab: Hashable, CaseIterable {
+    // Primary Actions
+    case resume
+    case search
+    case digest
+
+    // AI
+    case askClaude
+    case decide
+
+    // Analytics
     case activity
     case timeTracking
-    case askClaude
     case trends
     case projects
+
+    var displayName: String {
+        switch self {
+        case .resume: return "Resume"
+        case .search: return "Search"
+        case .digest: return "Digest"
+        case .askClaude: return "Ask Claude"
+        case .decide: return "Decide"
+        case .activity: return "Activity Feed"
+        case .timeTracking: return "Time Tracking"
+        case .trends: return "Trends"
+        case .projects: return "Projects"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .resume: return "arrow.counterclockwise.circle"
+        case .search: return "magnifyingglass"
+        case .digest: return "doc.text.magnifyingglass"
+        case .askClaude: return "bubble.left.and.bubble.right"
+        case .decide: return "scale.3d"
+        case .activity: return "list.bullet"
+        case .timeTracking: return "clock"
+        case .trends: return "chart.line.uptrend.xyaxis"
+        case .projects: return "folder"
+        }
+    }
 }
 
 // MARK: - Activity Feed
@@ -170,7 +225,7 @@ struct ActivityRowView: View {
                         .foregroundColor(.secondary)
 
                     if let duration = activity.duration {
-                        Text("• \(formatDuration(duration))")
+                        Text("• \(duration.formattedDurationWithSeconds)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -178,16 +233,6 @@ struct ActivityRowView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private func formatDuration(_ interval: TimeInterval) -> String {
-        let minutes = Int(interval) / 60
-        let seconds = Int(interval) % 60
-
-        if minutes > 0 {
-            return "\(minutes)m \(seconds)s"
-        }
-        return "\(seconds)s"
     }
 }
 
@@ -228,10 +273,9 @@ struct TimeTrackingView: View {
             timeByApp[appName, default: 0] += activity.duration ?? 0
         }
 
-        return timeByApp.map { (app: $0.key, time: $0.value) }
+        return Array(timeByApp.map { (app: $0.key, time: $0.value) }
             .sorted(by: { $0.time > $1.time })
-            .prefix(10)
-            .map { $0 }
+            .prefix(10))
     }
 }
 

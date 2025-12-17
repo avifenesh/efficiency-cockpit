@@ -92,13 +92,14 @@ final class GitActivityTracker {
 
     /// Get the last commit
     func getLastCommit(at repoPath: String) -> GitCommit? {
-        // Format: hash|message|author|timestamp
-        let format = "%H|%s|%an|%at"
+        // Format: hash<NUL>message<NUL>author<NUL>timestamp
+        // Use null byte as delimiter to handle commit messages containing special characters
+        let format = "%H%x00%s%x00%an%x00%at"
         guard let output = runGitCommand(["log", "-1", "--format=\(format)"], at: repoPath) else {
             return nil
         }
 
-        let parts = output.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "|")
+        let parts = output.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\0")
         guard parts.count >= 4 else { return nil }
 
         let timestamp = TimeInterval(parts[3]) ?? 0
@@ -114,13 +115,14 @@ final class GitActivityTracker {
 
     /// Get recent commits (for detecting new commits)
     func getRecentCommits(at repoPath: String, limit: Int = 10) -> [GitCommit] {
-        let format = "%H|%s|%an|%at"
+        // Use null byte as field delimiter, newline as record delimiter
+        let format = "%H%x00%s%x00%an%x00%at"
         guard let output = runGitCommand(["log", "-\(limit)", "--format=\(format)"], at: repoPath) else {
             return []
         }
 
         return output.components(separatedBy: .newlines).compactMap { line -> GitCommit? in
-            let parts = line.components(separatedBy: "|")
+            let parts = line.components(separatedBy: "\0")
             guard parts.count >= 4 else { return nil }
 
             let timestamp = TimeInterval(parts[3]) ?? 0
@@ -199,6 +201,12 @@ final class GitActivityTracker {
     private func runGitCommand(_ arguments: [String], at path: String) -> String? {
         let process = Process()
         let pipe = Pipe()
+        let fileHandle = pipe.fileHandleForReading
+
+        // Ensure file handle is closed when we're done
+        defer {
+            try? fileHandle.close()
+        }
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
@@ -211,7 +219,7 @@ final class GitActivityTracker {
             process.waitUntilExit()
 
             if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let data = fileHandle.readDataToEndOfFile()
                 return String(data: data, encoding: .utf8)
             } else {
                 // Non-zero exit status - not necessarily an error (e.g., not a git repo)
